@@ -123,7 +123,7 @@ class Html5 extends Tech {
 
   /**
    * A special function to trigger source set in a way that
-   * will allow player to re-trigger it if everyone is not ready
+   * will allow player to re-trigger if player/html5 are not ready
    * yet.
    *
    * @fires Tech#sourceset
