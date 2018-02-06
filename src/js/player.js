@@ -44,6 +44,7 @@ import './close-button.js';
 import './control-bar/control-bar.js';
 import './error-display.js';
 import './tracks/text-track-settings.js';
+import './resize-manager.js';
 
 // Import Html5 tech, at least for disposing the original video tag.
 import './tech/html5.js';
@@ -297,7 +298,7 @@ class Player extends Component {
       if (typeof tag.closest === 'function') {
         const closest = tag.closest('[lang]');
 
-        if (closest) {
+        if (closest && closest.getAttribute) {
           options.language = closest.getAttribute('lang');
         }
       } else {
@@ -471,6 +472,8 @@ class Player extends Component {
     this.changingSrc_ = false;
     this.playWaitingForReady_ = false;
     this.playOnLoadstart_ = null;
+
+    this.forceAutoplayInChrome_();
   }
 
   /**
@@ -1608,6 +1611,9 @@ class Player extends Component {
     this.ready(function() {
       if (method in middleware.allowedSetters) {
         return middleware.set(this.middleware_, this.tech_, method, arg);
+
+      } else if (method in middleware.allowedMediators) {
+        return middleware.mediate(this.middleware_, this.tech_, method, arg);
       }
 
       try {
@@ -1639,6 +1645,9 @@ class Player extends Component {
 
     if (method in middleware.allowedGetters) {
       return middleware.get(this.middleware_, this.tech_, method);
+
+    } else if (method in middleware.allowedMediators) {
+      return middleware.mediate(this.middleware_, this.tech_, method);
     }
 
     // Flash likes to die and reload when you hide or reposition it.
@@ -1789,6 +1798,9 @@ class Player extends Component {
    */
   currentTime(seconds) {
     if (typeof seconds !== 'undefined') {
+      if (seconds < 0) {
+        seconds = 0;
+      }
       this.techCall_('setCurrentTime', seconds);
       return;
     }
@@ -2554,9 +2566,27 @@ class Player extends Component {
     if (value !== undefined) {
       this.techCall_('setAutoplay', value);
       this.options_.autoplay = value;
+      this.ready(this.forceAutoplayInChrome_);
       return;
     }
     return this.techGet_('autoplay', value);
+  }
+
+  /**
+   * chrome started pausing the video when moving in the DOM
+   * causing autoplay to not continue due to how Video.js functions.
+   * See #4720 for more info.
+   *
+   * @private
+   */
+  forceAutoplayInChrome_() {
+    if (this.paused() &&
+        // read from the video element or options
+        (this.autoplay() || this.options_.autoplay) &&
+        // only target desktop chrome
+        (browser.IS_CHROME && !browser.IS_ANDROID)) {
+      this.play();
+    }
   }
 
   /**
@@ -3437,6 +3467,10 @@ Player.prototype.options_ = {
   // Default message to show when a video cannot be played.
   notSupportedMessage: 'No compatible source was found for this media.'
 };
+
+if (!browser.IS_IE8) {
+  Player.prototype.options_.children.push('resizeManager');
+}
 
 [
   /**
