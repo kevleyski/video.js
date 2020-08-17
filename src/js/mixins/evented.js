@@ -24,6 +24,25 @@ const isEvented = (object) =>
   ['on', 'one', 'off', 'trigger'].every(k => typeof object[k] === 'function');
 
 /**
+ * Adds a callback to run after the evented mixin applied.
+ *
+ * @param  {Object} object
+ *         An object to Add
+ * @param  {Function} callback
+ *         The callback to run.
+ */
+const addEventedCallback = (target, callback) => {
+  if (isEvented(target)) {
+    callback();
+  } else {
+    if (!target.eventedCallbacks) {
+      target.eventedCallbacks = [];
+    }
+    target.eventedCallbacks.push(callback);
+  }
+};
+
+/**
  * Whether a value is a valid event type - non-empty string or array.
  *
  * @private
@@ -162,7 +181,7 @@ const listen = (target, method, type, listener) => {
 };
 
 /**
- * Contains methods that provide event capabilites to an object which is passed
+ * Contains methods that provide event capabilities to an object which is passed
  * to {@link module:evented|evented}.
  *
  * @mixin EventedMixin
@@ -223,7 +242,7 @@ const EventedMixin = {
 
   /**
    * Add a listener to an event (or events) on this object or another evented
-   * object. The listener will only be called once and then removed.
+   * object. The listener will be called once per event and then removed.
    *
    * @param  {string|Array|Element|Object} targetOrType
    *         If this is a string or array, it represents the event type(s)
@@ -253,6 +272,10 @@ const EventedMixin = {
 
     // Targeting another evented object.
     } else {
+      // TODO: This wrapper is incorrect! It should only
+      //       remove the wrapper for the event type that called it.
+      //       Instead all listners are removed on the first trigger!
+      //       see https://github.com/videojs/video.js/issues/5962
       const wrapper = (...largs) => {
         this.off(target, type, wrapper);
         listener.apply(null, largs);
@@ -262,6 +285,51 @@ const EventedMixin = {
       // it using the ID of the original listener.
       wrapper.guid = listener.guid;
       listen(target, 'one', type, wrapper);
+    }
+  },
+
+  /**
+   * Add a listener to an event (or events) on this object or another evented
+   * object. The listener will only be called once for the first event that is triggered
+   * then removed.
+   *
+   * @param  {string|Array|Element|Object} targetOrType
+   *         If this is a string or array, it represents the event type(s)
+   *         that will trigger the listener.
+   *
+   *         Another evented object can be passed here instead, which will
+   *         cause the listener to listen for events on _that_ object.
+   *
+   *         In either case, the listener's `this` value will be bound to
+   *         this object.
+   *
+   * @param  {string|Array|Function} typeOrListener
+   *         If the first argument was a string or array, this should be the
+   *         listener function. Otherwise, this is a string or array of event
+   *         type(s).
+   *
+   * @param  {Function} [listener]
+   *         If the first argument was another evented object, this will be
+   *         the listener function.
+   */
+  any(...args) {
+    const {isTargetingSelf, target, type, listener} = normalizeListenArgs(this, args);
+
+    // Targeting this evented object.
+    if (isTargetingSelf) {
+      listen(target, 'any', type, listener);
+
+    // Targeting another evented object.
+    } else {
+      const wrapper = (...largs) => {
+        this.off(target, type, wrapper);
+        listener.apply(null, largs);
+      };
+
+      // Use the same function ID as the listener so we can remove it later
+      // it using the ID of the original listener.
+      wrapper.guid = listener.guid;
+      listen(target, 'any', type, wrapper);
     }
   },
 
@@ -326,7 +394,7 @@ const EventedMixin = {
    * @param   {Object} [hash]
    *          An additional object to pass along to listeners.
    *
-   * @returns {boolean}
+   * @return {boolean}
    *          Whether or not the default behavior was prevented.
    */
   trigger(event, hash) {
@@ -343,7 +411,7 @@ const EventedMixin = {
  * @param  {Object} [options={}]
  *         Options for customizing the mixin behavior.
  *
- * @param  {String} [options.eventBusKey]
+ * @param  {string} [options.eventBusKey]
  *         By default, adds a `eventBusEl_` DOM element to the target object,
  *         which is used as an event bus. If the target object already has a
  *         DOM element that should be used, pass its key here.
@@ -366,6 +434,12 @@ function evented(target, options = {}) {
 
   Obj.assign(target, EventedMixin);
 
+  if (target.eventedCallbacks) {
+    target.eventedCallbacks.forEach((callback) => {
+      callback();
+    });
+  }
+
   // When any evented object is disposed, it removes all its listeners.
   target.on('dispose', () => {
     target.off();
@@ -379,3 +453,4 @@ function evented(target, options = {}) {
 
 export default evented;
 export {isEvented};
+export {addEventedCallback};

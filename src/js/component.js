@@ -7,12 +7,14 @@ import window from 'global/window';
 import evented from './mixins/evented';
 import stateful from './mixins/stateful';
 import * as Dom from './utils/dom.js';
-import * as DomData from './utils/dom-data';
+import DomData from './utils/dom-data';
 import * as Fn from './utils/fn.js';
 import * as Guid from './utils/guid.js';
-import log from './utils/log.js';
-import toTitleCase from './utils/to-title-case.js';
+import {toTitleCase, toLowerCase} from './utils/string-cases.js';
 import mergeOptions from './utils/merge-options.js';
+import computedStyle from './utils/computed-style';
+import Map from './utils/map.js';
+import Set from './utils/set.js';
 
 /**
  * Base class for all UI Components.
@@ -58,6 +60,11 @@ class Component {
       this.player_ = player;
     }
 
+    this.isDisposed_ = false;
+
+    // Hold the reference to the parent component via `addChild` method
+    this.parentComponent_ = null;
+
     // Make a copy of prototype.options_ to protect against overriding defaults
     this.options_ = mergeOptions({}, this.options_);
 
@@ -95,6 +102,12 @@ class Component {
     this.childIndex_ = {};
     this.childNameIndex_ = {};
 
+    this.setTimeoutIds_ = new Set();
+    this.setIntervalIds_ = new Set();
+    this.rafIds_ = new Set();
+    this.namedRafs_ = new Map();
+    this.clearingTimersOnDispose_ = false;
+
     // Add any child components in options
     if (options.initChildren !== false) {
       this.initChildren();
@@ -116,6 +129,11 @@ class Component {
    */
   dispose() {
 
+    // Bail out if the component has already been disposed.
+    if (this.isDisposed_) {
+      return;
+    }
+
     /**
      * Triggered when a `Component` is disposed.
      *
@@ -123,10 +141,12 @@ class Component {
      * @type {EventTarget~Event}
      *
      * @property {boolean} [bubbles=false]
-     *           set to false so that the close event does not
+     *           set to false so that the dispose event does not
      *           bubble up
      */
     this.trigger({type: 'dispose', bubbles: false});
+
+    this.isDisposed_ = true;
 
     // Dispose all children.
     if (this.children_) {
@@ -142,18 +162,32 @@ class Component {
     this.childIndex_ = null;
     this.childNameIndex_ = null;
 
+    this.parentComponent_ = null;
+
     if (this.el_) {
       // Remove element from DOM
       if (this.el_.parentNode) {
         this.el_.parentNode.removeChild(this.el_);
       }
 
-      DomData.removeData(this.el_);
+      if (DomData.has(this.el_)) {
+        DomData.delete(this.el_);
+      }
       this.el_ = null;
     }
 
     // remove reference to the player after disposing of the element
     this.player_ = null;
+  }
+
+  /**
+   * Determine whether or not this component has been disposed.
+   *
+   * @return {boolean}
+   *         If the component has been disposed, will be `true`. Otherwise, `false`.
+   */
+  isDisposed() {
+    return Boolean(this.isDisposed_);
   }
 
   /**
@@ -176,12 +210,8 @@ class Component {
    *
    * @return {Object}
    *         A new object of `this.options_` and `obj` merged together.
-   *
-   * @deprecated since version 5
    */
   options(obj) {
-    log.warn('this.options() has been deprecated and will be moved to the constructor in 6.0');
-
     if (!obj) {
       return this.options_;
     }
@@ -223,7 +253,7 @@ class Component {
    * Localize a string given the string in english.
    *
    * If tokens are provided, it'll try and run a simple token replacement on the provided string.
-   * The tokens it loooks for look like `{1}` with the index being 1-indexed into the tokens array.
+   * The tokens it looks for look like `{1}` with the index being 1-indexed into the tokens array.
    *
    * If a `defaultValue` is provided, it'll use that over `string`,
    * if a value isn't found in provided language files.
@@ -357,9 +387,38 @@ class Component {
       return;
     }
 
-    name = toTitleCase(name);
-
     return this.childNameIndex_[name];
+  }
+
+  /**
+   * Returns the descendant `Component` following the givent
+   * descendant `names`. For instance ['foo', 'bar', 'baz'] would
+   * try to get 'foo' on the current component, 'bar' on the 'foo'
+   * component and 'baz' on the 'bar' component and return undefined
+   * if any of those don't exist.
+   *
+   * @param {...string[]|...string} names
+   *        The name of the child `Component` to get.
+   *
+   * @return {Component|undefined}
+   *         The descendant `Component` following the given descendant
+   *         `names` or undefined.
+   */
+  getDescendant(...names) {
+    // flatten array argument into the main array
+    names = names.reduce((acc, n) => acc.concat(n), []);
+
+    let currentChild = this;
+
+    for (let i = 0; i < names.length; i++) {
+      currentChild = currentChild.getChild(names[i]);
+
+      if (!currentChild || !currentChild.getChild) {
+        return;
+      }
+    }
+
+    return currentChild;
   }
 
   /**
@@ -416,7 +475,11 @@ class Component {
       component = child;
     }
 
+    if (component.parentComponent_) {
+      component.parentComponent_.removeChild(component);
+    }
     this.children_.splice(index, 0, component);
+    component.parentComponent_ = this;
 
     if (typeof component.id === 'function') {
       this.childIndex_[component.id()] = component;
@@ -428,13 +491,23 @@ class Component {
 
     if (componentName) {
       this.childNameIndex_[componentName] = component;
+      this.childNameIndex_[toLowerCase(componentName)] = component;
     }
 
     // Add the UI object's element to the container div (box)
     // Having an element is not required
     if (typeof component.el === 'function' && component.el()) {
-      const childNodes = this.contentEl().children;
-      const refNode = childNodes[index] || null;
+      // If inserting before a component, insert before that component's element
+      let refNode = null;
+
+      if (this.children_[index + 1]) {
+        // Most children are components, but the video tech is an HTML element
+        if (this.children_[index + 1].el_) {
+          refNode = this.children_[index + 1].el_;
+        } else if (Dom.isEl(this.children_[index + 1])) {
+          refNode = this.children_[index + 1];
+        }
+      }
 
       this.contentEl().insertBefore(component.el(), refNode);
     }
@@ -473,8 +546,11 @@ class Component {
       return;
     }
 
+    component.parentComponent_ = null;
+
     this.childIndex_[component.id()] = null;
-    this.childNameIndex_[component.name()] = null;
+    this.childNameIndex_[toTitleCase(component.name())] = null;
+    this.childNameIndex_[toLowerCase(component.name())] = null;
 
     const compEl = component.el();
 
@@ -545,39 +621,39 @@ class Component {
       workingChildren
       // children that are in this.options_ but also in workingChildren  would
       // give us extra children we do not want. So, we want to filter them out.
-      .concat(Object.keys(this.options_)
-              .filter(function(child) {
-                return !workingChildren.some(function(wchild) {
-                  if (typeof wchild === 'string') {
-                    return child === wchild;
-                  }
-                  return child === wchild.name;
-                });
-              }))
-      .map((child) => {
-        let name;
-        let opts;
+        .concat(Object.keys(this.options_)
+          .filter(function(child) {
+            return !workingChildren.some(function(wchild) {
+              if (typeof wchild === 'string') {
+                return child === wchild;
+              }
+              return child === wchild.name;
+            });
+          }))
+        .map((child) => {
+          let name;
+          let opts;
 
-        if (typeof child === 'string') {
-          name = child;
-          opts = children[name] || this.options_[name] || {};
-        } else {
-          name = child.name;
-          opts = child;
-        }
+          if (typeof child === 'string') {
+            name = child;
+            opts = children[name] || this.options_[name] || {};
+          } else {
+            name = child.name;
+            opts = child;
+          }
 
-        return {name, opts};
-      })
-      .filter((child) => {
+          return {name, opts};
+        })
+        .filter((child) => {
         // we have to make sure that child.name isn't in the techOrder since
         // techs are registerd as Components but can't aren't compatible
         // See https://github.com/videojs/video.js/issues/2772
-        const c = Component.getComponent(child.opts.componentClass ||
+          const c = Component.getComponent(child.opts.componentClass ||
                                        toTitleCase(child.name));
 
-        return c && !Tech.isTech(c);
-      })
-      .forEach(handleAdd);
+          return c && !Tech.isTech(c);
+        })
+        .forEach(handleAdd);
     }
   }
 
@@ -630,7 +706,7 @@ class Component {
   triggerReady() {
     this.isReady_ = true;
 
-    // Ensure ready is triggerd asynchronously
+    // Ensure ready is triggered asynchronously
     this.setTimeout(function() {
       const readyQueue = this.readyQueue_;
 
@@ -960,8 +1036,9 @@ class Component {
   }
 
   /**
-   * Get the width or the height of the `Component` elements computed style. Uses
-   * `window.getComputedStyle`.
+   * Get the computed width or the height of the component's element.
+   *
+   * Uses `window.getComputedStyle`.
    *
    * @param {string} widthOrHeight
    *        A string containing 'width' or 'height'. Whichever one you want to get.
@@ -977,19 +1054,15 @@ class Component {
       throw new Error('currentDimension only accepts width or height value');
     }
 
-    if (typeof window.getComputedStyle === 'function') {
-      const computedStyle = window.getComputedStyle(this.el_);
-
-      computedWidthOrHeight = computedStyle.getPropertyValue(widthOrHeight) || computedStyle[widthOrHeight];
-    }
+    computedWidthOrHeight = computedStyle(this.el_, widthOrHeight);
 
     // remove 'px' from variable and parse as integer
     computedWidthOrHeight = parseFloat(computedWidthOrHeight);
 
     // if the computed value is still 0, it's possible that the browser is lying
     // and we want to check the offset values.
-    // This code also runs on IE8 and wherever getComputedStyle doesn't exist.
-    if (computedWidthOrHeight === 0) {
+    // This code also runs wherever getComputedStyle doesn't exist.
+    if (computedWidthOrHeight === 0 || isNaN(computedWidthOrHeight)) {
       const rule = `offset${toTitleCase(widthOrHeight)}`;
 
       computedWidthOrHeight = this.el_[rule];
@@ -1012,11 +1085,13 @@ class Component {
    */
 
   /**
-   * Get an object that contains width and height values of the `Component`s
-   * computed style.
+   * Get an object that contains computed width and height values of the
+   * component's element.
+   *
+   * Uses `window.getComputedStyle`.
    *
    * @return {Component~DimensionObject}
-   *         The dimensions of the components element
+   *         The computed dimensions of the component's element.
    */
   currentDimensions() {
     return {
@@ -1026,20 +1101,24 @@ class Component {
   }
 
   /**
-   * Get the width of the `Component`s computed style. Uses `window.getComputedStyle`.
+   * Get the computed width of the component's element.
    *
-   * @return {number} width
-   *           The width of the `Component`s computed style.
+   * Uses `window.getComputedStyle`.
+   *
+   * @return {number}
+   *         The computed width of the component's element.
    */
   currentWidth() {
     return this.currentDimension('width');
   }
 
   /**
-   * Get the height of the `Component`s computed style. Uses `window.getComputedStyle`.
+   * Get the computed height of the component's element.
    *
-   * @return {number} height
-   *           The height of the `Component`s computed style.
+   * Uses `window.getComputedStyle`.
+   *
+   * @return {number}
+   *         The computed height of the component's element.
    */
   currentHeight() {
     return this.currentDimension('height');
@@ -1057,6 +1136,36 @@ class Component {
    */
   blur() {
     this.el_.blur();
+  }
+
+  /**
+   * When this Component receives a `keydown` event which it does not process,
+   *  it passes the event to the Player for handling.
+   *
+   * @param {EventTarget~Event} event
+   *        The `keydown` event that caused this function to be called.
+   */
+  handleKeyDown(event) {
+    if (this.player_) {
+
+      // We only stop propagation here because we want unhandled events to fall
+      // back to the browser.
+      event.stopPropagation();
+      this.player_.handleKeyDown(event);
+    }
+  }
+
+  /**
+   * Many components used to have a `handleKeyPress` method, which was poorly
+   * named because it listened to a `keydown` event. This method name now
+   * delegates to `handleKeyDown`. This means anyone calling `handleKeyPress`
+   * will not see their method calls stop working.
+   *
+   * @param {EventTarget~Event} event
+   *        The event that caused this function to be called.
+   */
+  handleKeyPress(event) {
+    this.handleKeyDown(event);
   }
 
   /**
@@ -1097,7 +1206,7 @@ class Component {
           pageY: event.touches[0].pageY
         };
         // Record start time so we can detect a tap vs. "touch and hold"
-        touchStart = new Date().getTime();
+        touchStart = window.performance.now();
         // Reset couldBeTap tracking
         couldBeTap = true;
       }
@@ -1135,7 +1244,7 @@ class Component {
       // Proceed only if the touchmove/leave/cancel event didn't happen
       if (couldBeTap === true) {
         // Measure how long the touch lasted
-        const touchTime = new Date().getTime() - touchStart;
+        const touchTime = window.performance.now() - touchStart;
 
         // Make sure the touch was less than the threshold to be considered a tap
         if (touchTime < touchTimeThreshold) {
@@ -1226,9 +1335,9 @@ class Component {
    *    {@link Component#dispose} gets called.
    * 2. The function callback will gets turned into a {@link Component~GenericCallback}
    *
-   * > Note: You can use `window.clearTimeout` on the id returned by this function. This
+   * > Note: You can't use `window.clearTimeout` on the id returned by this function. This
    *         will cause its dispose listener not to get cleaned up! Please use
-   *         {@link Component#clearTimeout} or {@link Component#dispose}.
+   *         {@link Component#clearTimeout} or {@link Component#dispose} instead.
    *
    * @param {Component~GenericCallback} fn
    *        The function that will be run after `timeout`.
@@ -1245,14 +1354,22 @@ class Component {
    * @see [Similar to]{@link https://developer.mozilla.org/en-US/docs/Web/API/WindowTimers/setTimeout}
    */
   setTimeout(fn, timeout) {
+    // declare as variables so they are properly available in timeout function
+    // eslint-disable-next-line
+    var timeoutId, disposeFn;
+
     fn = Fn.bind(this, fn);
 
-    const timeoutId = window.setTimeout(fn, timeout);
-    const disposeFn = () => this.clearTimeout(timeoutId);
+    this.clearTimersOnDispose_();
 
-    disposeFn.guid = `vjs-timeout-${timeoutId}`;
+    timeoutId = window.setTimeout(() => {
+      if (this.setTimeoutIds_.has(timeoutId)) {
+        this.setTimeoutIds_.delete(timeoutId);
+      }
+      fn();
+    }, timeout);
 
-    this.on('dispose', disposeFn);
+    this.setTimeoutIds_.add(timeoutId);
 
     return timeoutId;
   }
@@ -1273,13 +1390,10 @@ class Component {
    * @see [Similar to]{@link https://developer.mozilla.org/en-US/docs/Web/API/WindowTimers/clearTimeout}
    */
   clearTimeout(timeoutId) {
-    window.clearTimeout(timeoutId);
-
-    const disposeFn = function() {};
-
-    disposeFn.guid = `vjs-timeout-${timeoutId}`;
-
-    this.off('dispose', disposeFn);
+    if (this.setTimeoutIds_.has(timeoutId)) {
+      this.setTimeoutIds_.delete(timeoutId);
+      window.clearTimeout(timeoutId);
+    }
 
     return timeoutId;
   }
@@ -1307,13 +1421,11 @@ class Component {
   setInterval(fn, interval) {
     fn = Fn.bind(this, fn);
 
+    this.clearTimersOnDispose_();
+
     const intervalId = window.setInterval(fn, interval);
 
-    const disposeFn = () => this.clearInterval(intervalId);
-
-    disposeFn.guid = `vjs-interval-${intervalId}`;
-
-    this.on('dispose', disposeFn);
+    this.setIntervalIds_.add(intervalId);
 
     return intervalId;
   }
@@ -1334,13 +1446,10 @@ class Component {
    * @see [Similar to]{@link https://developer.mozilla.org/en-US/docs/Web/API/WindowTimers/clearInterval}
    */
   clearInterval(intervalId) {
-    window.clearInterval(intervalId);
-
-    const disposeFn = function() {};
-
-    disposeFn.guid = `vjs-interval-${intervalId}`;
-
-    this.off('dispose', disposeFn);
+    if (this.setIntervalIds_.has(intervalId)) {
+      this.setIntervalIds_.delete(intervalId);
+      window.clearInterval(intervalId);
+    }
 
     return intervalId;
   }
@@ -1371,20 +1480,74 @@ class Component {
    * @see [Similar to]{@link https://developer.mozilla.org/en-US/docs/Web/API/window/requestAnimationFrame}
    */
   requestAnimationFrame(fn) {
-    if (this.supportsRaf_) {
-      fn = Fn.bind(this, fn);
-
-      const id = window.requestAnimationFrame(fn);
-      const disposeFn = () => this.cancelAnimationFrame(id);
-
-      disposeFn.guid = `vjs-raf-${id}`;
-      this.on('dispose', disposeFn);
-
-      return id;
+    // Fall back to using a timer.
+    if (!this.supportsRaf_) {
+      return this.setTimeout(fn, 1000 / 60);
     }
 
-    // Fall back to using a timer.
-    return this.setTimeout(fn, 1000 / 60);
+    this.clearTimersOnDispose_();
+
+    // declare as variables so they are properly available in rAF function
+    // eslint-disable-next-line
+    var id;
+    fn = Fn.bind(this, fn);
+
+    id = window.requestAnimationFrame(() => {
+      if (this.rafIds_.has(id)) {
+        this.rafIds_.delete(id);
+      }
+      fn();
+    });
+    this.rafIds_.add(id);
+
+    return id;
+  }
+
+  /**
+   * Request an animation frame, but only one named animation
+   * frame will be queued. Another will never be added until
+   * the previous one finishes.
+   *
+   * @param {string} name
+   *        The name to give this requestAnimationFrame
+   *
+   * @param  {Component~GenericCallback} fn
+   *         A function that will be bound to this component and executed just
+   *         before the browser's next repaint.
+   */
+  requestNamedAnimationFrame(name, fn) {
+    if (this.namedRafs_.has(name)) {
+      return;
+    }
+    this.clearTimersOnDispose_();
+
+    fn = Fn.bind(this, fn);
+
+    const id = this.requestAnimationFrame(() => {
+      fn();
+      if (this.namedRafs_.has(name)) {
+        this.namedRafs_.delete(name);
+      }
+    });
+
+    this.namedRafs_.set(name, id);
+
+    return name;
+  }
+
+  /**
+   * Cancels a current named animation frame if it exists.
+   *
+   * @param {string} name
+   *        The name of the requestAnimationFrame to cancel.
+   */
+  cancelNamedAnimationFrame(name) {
+    if (!this.namedRafs_.has(name)) {
+      return;
+    }
+
+    this.cancelAnimationFrame(this.namedRafs_.get(name));
+    this.namedRafs_.delete(name);
   }
 
   /**
@@ -1404,20 +1567,51 @@ class Component {
    * @see [Similar to]{@link https://developer.mozilla.org/en-US/docs/Web/API/window/cancelAnimationFrame}
    */
   cancelAnimationFrame(id) {
-    if (this.supportsRaf_) {
-      window.cancelAnimationFrame(id);
-
-      const disposeFn = function() {};
-
-      disposeFn.guid = `vjs-raf-${id}`;
-
-      this.off('dispose', disposeFn);
-
-      return id;
+    // Fall back to using a timer.
+    if (!this.supportsRaf_) {
+      return this.clearTimeout(id);
     }
 
-    // Fall back to using a timer.
-    return this.clearTimeout(id);
+    if (this.rafIds_.has(id)) {
+      this.rafIds_.delete(id);
+      window.cancelAnimationFrame(id);
+    }
+
+    return id;
+
+  }
+
+  /**
+   * A function to setup `requestAnimationFrame`, `setTimeout`,
+   * and `setInterval`, clearing on dispose.
+   *
+   * > Previously each timer added and removed dispose listeners on it's own.
+   * For better performance it was decided to batch them all, and use `Set`s
+   * to track outstanding timer ids.
+   *
+   * @private
+   */
+  clearTimersOnDispose_() {
+    if (this.clearingTimersOnDispose_) {
+      return;
+    }
+
+    this.clearingTimersOnDispose_ = true;
+    this.one('dispose', () => {
+      [
+        ['namedRafs_', 'cancelNamedAnimationFrame'],
+        ['rafIds_', 'cancelAnimationFrame'],
+        ['setTimeoutIds_', 'clearTimeout'],
+        ['setIntervalIds_', 'clearInterval']
+      ].forEach(([idName, cancelName]) => {
+        // for a `Set` key will actually be the value again
+        // so forEach((val, val) =>` but for maps we want to use
+        // the key.
+        this[idName].forEach((val, key) => this[cancelName](key));
+      });
+
+      this.clearingTimersOnDispose_ = false;
+    });
   }
 
   /**
@@ -1487,6 +1681,7 @@ class Component {
     }
 
     Component.components_[name] = ComponentToRegister;
+    Component.components_[toLowerCase(name)] = ComponentToRegister;
 
     return ComponentToRegister;
   }
@@ -1506,15 +1701,11 @@ class Component {
    *             return that if it exists.
    */
   static getComponent(name) {
-    if (!name) {
+    if (!name || !Component.components_) {
       return;
     }
 
-    name = toTitleCase(name);
-
-    if (Component.components_ && Component.components_[name]) {
-      return Component.components_[name];
-    }
+    return Component.components_[name];
   }
 }
 
