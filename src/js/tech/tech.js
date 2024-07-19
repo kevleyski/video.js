@@ -16,13 +16,15 @@ import {toTitleCase, toLowerCase} from '../utils/str.js';
 import vtt from 'videojs-vtt.js';
 import * as Guid from '../utils/guid.js';
 
+/** @import { TimeRange } from '../utils/time' */
+
 /**
  * An Object containing a structure like: `{src: 'url', type: 'mimetype'}` or string
  * that just contains the src url alone.
  * * `var SourceObject = {src: 'http://ex.com/video.mp4', type: 'video/mp4'};`
    * `var SourceString = 'http://example.com/some-video.mp4';`
  *
- * @typedef {Object|string} Tech~SourceObject
+ * @typedef {Object|string} SourceObject
  *
  * @property {string} src
  *           The url to the source
@@ -88,7 +90,7 @@ class Tech extends Component {
   * @param {Object} [options]
   *        The key/value store of player options.
   *
-  * @param {Component~ReadyCallback} [ready]
+  * @param {Function} [ready]
   *        Callback function to call when the `HTML5` Tech is ready.
   */
   constructor(options = {}, ready = function() {}) {
@@ -185,7 +187,7 @@ class Tech extends Component {
      *
      * @see {@link Player#event:sourceset}
      * @event Tech#sourceset
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger({
       src,
@@ -228,7 +230,7 @@ class Tech extends Component {
    *
    * > This function is called by {@link Tech#manualProgressOn}
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        The `ready` event that caused this to run.
    *
    * @listens Tech#ready
@@ -246,7 +248,7 @@ class Tech extends Component {
          * See {@link Player#progress}
          *
          * @event Tech#progress
-         * @type {EventTarget~Event}
+         * @type {Event}
          */
         this.trigger('progress');
       }
@@ -263,7 +265,7 @@ class Tech extends Component {
    * Update our internal duration on a `durationchange` event by calling
    * {@link Tech#duration}.
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        The `durationchange` event that caused this to run.
    *
    * @listens Tech#durationchange
@@ -343,7 +345,7 @@ class Tech extends Component {
        * Triggered at an interval of 250ms to indicated that time is passing in the video.
        *
        * @event Tech#timeupdate
-       * @type {EventTarget~Event}
+       * @type {Event}
        */
       this.trigger({ type: 'timeupdate', target: this, manuallyTriggered: true });
 
@@ -504,10 +506,13 @@ class Tech extends Component {
    * Set whether we are scrubbing or not
    *
    * @abstract
+   * @param {boolean} _isScrubbing
+   *                  - true for we are currently scrubbing
+   *                  - false for we are no longer scrubbing
    *
    * @see {Html5#setScrubbing}
    */
-  setScrubbing() {}
+  setScrubbing(_isScrubbing) {}
 
   /**
    * Get whether we are scrubbing or not
@@ -522,16 +527,18 @@ class Tech extends Component {
    * Causes a manual time update to occur if {@link Tech#manualTimeUpdatesOn} was
    * previously called.
    *
+   * @param {number} _seconds
+   *        Set the current time of the media to this.
    * @fires Tech#timeupdate
    */
-  setCurrentTime() {
+  setCurrentTime(_seconds) {
     // improve the accuracy of manual timeupdates
     if (this.manualTimeUpdates) {
       /**
        * A manual `timeupdate` event.
        *
        * @event Tech#timeupdate
-       * @type {EventTarget~Event}
+       * @type {Event}
        */
       this.trigger({ type: 'timeupdate', target: this, manuallyTriggered: true });
     }
@@ -552,21 +559,21 @@ class Tech extends Component {
       * Triggered when tracks are added or removed on the Tech {@link AudioTrackList}
       *
       * @event Tech#audiotrackchange
-      * @type {EventTarget~Event}
+      * @type {Event}
       */
 
     /**
       * Triggered when tracks are added or removed on the Tech {@link VideoTrackList}
       *
       * @event Tech#videotrackchange
-      * @type {EventTarget~Event}
+      * @type {Event}
       */
 
     /**
       * Triggered when tracks are added or removed on the Tech {@link TextTrackList}
       *
       * @event Tech#texttrackchange
-      * @type {EventTarget~Event}
+      * @type {Event}
       */
     TRACK_TYPES.NORMAL.names.forEach((name) => {
       const props = TRACK_TYPES.NORMAL[name];
@@ -620,7 +627,7 @@ class Tech extends Component {
          * Fired when vtt.js is loaded.
          *
          * @event Tech#vttjsloaded
-         * @type {EventTarget~Event}
+         * @type {Event}
          */
         this.trigger('vttjsloaded');
       };
@@ -629,7 +636,7 @@ class Tech extends Component {
          * Fired when vtt.js was not loaded due to an error
          *
          * @event Tech#vttjsloaded
-         * @type {EventTarget~Event}
+         * @type {Event}
          */
         this.trigger('vttjserror');
       };
@@ -916,7 +923,7 @@ class Tech extends Component {
    *
    * @abstract
    */
-  overrideNativeAudioTracks() {}
+  overrideNativeAudioTracks(override) {}
 
   /**
    * Attempt to force override of native video tracks.
@@ -926,15 +933,15 @@ class Tech extends Component {
    *
    * @abstract
    */
-  overrideNativeVideoTracks() {}
+  overrideNativeVideoTracks(override) {}
 
-  /*
+  /**
    * Check if the tech can support the given mime-type.
    *
    * The base tech does not support any type, but source handlers might
    * overwrite this.
    *
-   * @param  {string} type
+   * @param  {string} _type
    *         The mimetype to check for support
    *
    * @return {string}
@@ -944,7 +951,7 @@ class Tech extends Component {
    *
    * @abstract
    */
-  canPlayType() {
+  canPlayType(_type) {
     return '';
   }
 
@@ -954,11 +961,11 @@ class Tech extends Component {
    * The base tech does not support any type, but source handlers might
    * overwrite this.
    *
-   * @param {string} type
+   * @param {string} _type
    *        The media type to check
    * @return {string} Returns the native video element's response
    */
-  static canPlayType() {
+  static canPlayType(_type) {
     return '';
   }
 
@@ -1135,7 +1142,7 @@ Tech.prototype.featuresVolumeControl = true;
 /**
  * Boolean indicating whether the `Tech` supports muting volume.
  *
- * @type {bolean}
+ * @type {boolean}
  * @default
  */
 Tech.prototype.featuresMuteControl = true;
@@ -1275,7 +1282,7 @@ Tech.withSourceHandlers = function(_Tech) {
    *
    * TODO: Answer question: should 'probably' be prioritized over 'maybe'
    *
-   * @param {Tech~SourceObject} source
+   * @param {SourceObject} source
    *        The source object
    *
    * @param {Object} options
@@ -1303,7 +1310,7 @@ Tech.withSourceHandlers = function(_Tech) {
   /**
    * Check if the tech can support the given source.
    *
-   * @param {Tech~SourceObject} srcObj
+   * @param {SourceObject} srcObj
    *        The source object
    *
    * @param {Object} options
@@ -1366,14 +1373,14 @@ Tech.withSourceHandlers = function(_Tech) {
    * and source handlers.
    * Should never be called unless a source handler was found.
    *
-   * @param {Tech~SourceObject} source
+   * @param {SourceObject} source
    *        A source object with src and type keys
    */
   _Tech.prototype.setSource = function(source) {
     let sh = _Tech.selectSourceHandler(source, this.options_);
 
     if (!sh) {
-      // Fall back to a native source hander when unsupported sources are
+      // Fall back to a native source handler when unsupported sources are
       // deliberately set
       if (_Tech.nativeSourceHandler) {
         sh = _Tech.nativeSourceHandler;

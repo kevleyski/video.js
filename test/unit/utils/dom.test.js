@@ -3,6 +3,7 @@ import document from 'global/document';
 import sinon from 'sinon';
 import * as Dom from '../../../src/js/utils/dom.js';
 import TestHelpers from '../test-helpers.js';
+import * as browser from '../../../src/js/utils/browser.js';
 
 QUnit.module('utils/dom');
 
@@ -658,12 +659,6 @@ QUnit.test('isSingleLeftClick() checks return values for mousedown event', funct
 
   // Left mouse click
   mouseEvent.button = 0;
-  mouseEvent.buttons = 0;
-
-  assert.notOk(Dom.isSingleLeftClick(mouseEvent), 'a left mouse click on an older browser (Safari) is a single left click');
-
-  // Left mouse click
-  mouseEvent.button = 0;
   mouseEvent.buttons = 1;
 
   assert.ok(Dom.isSingleLeftClick(mouseEvent), 'a left mouse click on browsers that supporting buttons property is a single left click');
@@ -685,4 +680,149 @@ QUnit.test('isSingleLeftClick() checks return values for mousedown event', funct
   mouseEvent.buttons = undefined;
 
   assert.ok(Dom.isSingleLeftClick(mouseEvent), 'a touch event on simulated mobiles is a single left click');
+
+  // MacOS trackpad "tap to click". Sonoma always does this, previous MacOS did this inconsistently, buttons was usally 1.
+  mouseEvent.button = 0;
+  mouseEvent.buttons = 0;
+
+  assert.ok(Dom.isSingleLeftClick(mouseEvent), 'a tap-to-click on Mac trackpad is a single left click');
+});
+
+QUnit.test('dom.getPointerPosition should return position with translated', function(assert) {
+  const wrapper = document.createElement('div');
+
+  const width = '100px';
+  const height = '50px';
+
+  wrapper.style.width = width;
+  wrapper.style.height = height;
+  wrapper.style.position = 'absolute';
+  wrapper.style.top = '0';
+  wrapper.style.left = '0';
+
+  let position;
+
+  document.body.appendChild(wrapper);
+  const event = {
+    offsetX: 20,
+    offsetY: 0,
+    target: wrapper
+  };
+
+  position = Dom.getPointerPosition(wrapper, event);
+
+  // Default click on element without any transform
+  assert.deepEqual(position, { x: 0.2, y: 1 });
+
+  const origIOS = browser.IS_IOS;
+
+  wrapper.style.transform = 'translate(5px)';
+
+  const transformedTouch = {
+    offsetX: 20,
+    offsetY: 0,
+    target: wrapper,
+    changedTouches: [
+      {
+        pageX: 20,
+        pageY: 0
+      }
+    ]
+  };
+
+  // Ignore translate x/y when not in IOS
+  position = Dom.getPointerPosition(wrapper, transformedTouch);
+  assert.deepEqual(position, { x: 0.2, y: 1 });
+
+  // Add calculate with IOS to true
+  browser.stub_IS_IOS(true);
+  position = Dom.getPointerPosition(wrapper, transformedTouch);
+  assert.deepEqual(position, { x: 0.15, y: 1 });
+
+  // Create complex template where position of each video is controlled by
+  // a web component with transform
+  wrapper.style.transform = '';
+  const progressStyle = `position: absolute; height: ${height}; width: ${width};`;
+
+  wrapper.innerHTML = `
+    <test-slot-element id="slides" style="position: absolute" data-style="position: relative; transform: translate(5px);">
+      <div class="video-01">
+        <div class="progress-01" style="${progressStyle}"></div>
+      </div>
+      <div class="video-02">
+        <div class="progress-02" style="${progressStyle}"></div>
+      </div>
+    </test-slot-element>
+  `;
+  document.body.appendChild(wrapper);
+
+  const slottedProgressBar = wrapper.querySelector('div.progress-02');
+
+  // Handle slot elements pointer position
+  transformedTouch.target = slottedProgressBar;
+  position = Dom.getPointerPosition(slottedProgressBar, transformedTouch);
+  assert.deepEqual(position, { x: 0.15, y: 1 });
+
+  // Non IOS slot element pointer position
+  browser.stub_IS_IOS(false);
+  position = Dom.getPointerPosition(slottedProgressBar, transformedTouch);
+  assert.deepEqual(position, { x: 0.20, y: 1 });
+
+  browser.stub_IS_IOS(origIOS);
+});
+
+QUnit.test('Dom.copyStyleSheetsToWindow() copies all style sheets to a window', function(assert) {
+  /**
+   * This test is checking that styles are copied by comparing strings in original stylesheets to those in
+   * documents.styleSheets in the new (fake) window. This can be problematic on older Safari as documents.styleSheets
+   * does not always return the original style - a shorthand property like `background: white` may be returned as
+   * `background-color: white`.
+   */
+
+  const fakeWindow = document.createElement('div');
+  const done = assert.async();
+
+  assert.expect(7);
+
+  fakeWindow.document = {
+    head: document.createElement('div')
+  };
+
+  const style1 = document.createElement('style');
+
+  style1.textContent = 'body { background-color: white; }';
+  document.head.appendChild(style1);
+
+  const style2 = document.createElement('style');
+
+  style2.textContent = 'body { margin: 0px; }';
+  document.head.appendChild(style2);
+
+  const link = document.createElement('link');
+
+  link.rel = 'stylesheet';
+  link.type = 'text/css';
+  link.media = 'print';
+  link.href = 'http://asdf.com/styles.css';
+
+  const containsRulesFromStyle = (el) => {
+    return Boolean([...fakeWindow.document.head.querySelectorAll('style')].find(s => {
+      return s.textContent.includes(el.textContent);
+    }));
+  };
+
+  link.onload = link.onerror = () => {
+    Dom.copyStyleSheetsToWindow(fakeWindow);
+    assert.strictEqual(fakeWindow.document.head.querySelectorAll('style, link').length, document.styleSheets.length, 'the fake window has as many <style> or <link> elements as document.styleSheets');
+    assert.true(containsRulesFromStyle(style1), 'a <style> in the fake window contains content from first <style> element');
+    assert.true(containsRulesFromStyle(style2), 'a <style> in the fake window contains content from second <style> element');
+    assert.strictEqual(fakeWindow.document.head.querySelectorAll('link[rel=stylesheet]').length, 1, 'the fake window has one <link> stylesheet element');
+    const fakeWindowLink = fakeWindow.document.head.querySelectorAll('link[rel=stylesheet]')[0];
+
+    assert.strictEqual(fakeWindowLink.type, link.type, 'the <style> type attribute in the fake window is the one from <link> element');
+    assert.strictEqual(fakeWindowLink.href, link.href, 'the <style> href attribute in the fake window is the one from <link> element');
+    assert.strictEqual(fakeWindowLink.media, link.media, 'the <style> media attribute in the fake window is the one from <link> element');
+    done();
+  };
+  document.head.appendChild(link);
 });

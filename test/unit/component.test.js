@@ -28,6 +28,11 @@ QUnit.module('Component', {
     Component.registerComponent('TestComponent2', TestComponent2);
     Component.registerComponent('TestComponent3', TestComponent3);
     Component.registerComponent('TestComponent4', TestComponent4);
+
+    sinon.stub(window.DOMParser.prototype, 'parseFromString').returns({
+      querySelector: () => false,
+      documentElement: document.createElement('span')
+    });
   },
   beforeEach() {
     this.clock = sinon.useFakeTimers();
@@ -42,6 +47,8 @@ QUnit.module('Component', {
     delete Component.components_.TestComponent2;
     delete Component.components_.TestComponent3;
     delete Component.components_.TestComponent4;
+
+    window.DOMParser.prototype.parseFromString.restore();
   }
 });
 
@@ -174,6 +181,90 @@ QUnit.test('should allow for children that are elements', function(assert) {
   assert.ok(child2.el_.nextSibling === testEl, 'addChild should insert el before a sibling that is an element');
 
   /* eslint-enable no-unused-vars */
+});
+
+QUnit.test('setIcon should not do anything when experimentalSvgIcons is not set', function(assert) {
+  const comp = new Component(this.player);
+  const iconName = 'test';
+
+  assert.equal(comp.setIcon(iconName), null, 'we should not return anything');
+
+  comp.dispose();
+});
+
+QUnit.test('setIcon should return the correct SVG', function(assert) {
+  const player = TestHelpers.makePlayer({experimentalSvgIcons: true});
+
+  const comp = new Component(player);
+  const iconName = 'test';
+
+  // Elements and children of the icon.
+  const spanEl = comp.setIcon(iconName);
+  const svgEl = spanEl.childNodes[0];
+  const useEl = svgEl.childNodes[0];
+
+  // Ensure all elements are of the correct type.
+  assert.equal(spanEl.nodeName.toLowerCase(), 'span', 'parent element should be a <span>');
+  assert.equal(svgEl.nodeName.toLowerCase(), 'svg', 'first child element should be a <svg>');
+  assert.equal(useEl.nodeName.toLowerCase(), 'use', 'second child element should be a <use>');
+
+  // Ensure the classname and attributes are set correctly on the elements.
+  assert.equal(spanEl.className, 'vjs-icon-placeholder vjs-svg-icon', 'span should have icon class');
+  assert.equal(svgEl.getAttribute('viewBox'), '0 0 512 512', 'svg should have viewBox set');
+  assert.equal(useEl.getAttribute('href'), '#vjs-icon-test', 'use should have an href set with the correct icon url');
+
+  assert.equal(comp.iconIsSet_, true, 'the component iconIsSet_ property is set to true');
+
+  player.dispose();
+  comp.dispose();
+});
+
+QUnit.test('setIcon should call replaceChild if an icon already exists', function(assert) {
+  const player = TestHelpers.makePlayer({experimentalSvgIcons: true});
+
+  const comp = new Component(player);
+
+  const appendSpy = sinon.spy(comp.el(), 'appendChild');
+  const replaceSpy = sinon.spy(comp.el(), 'replaceChild');
+
+  // Elements and children of the icon.
+  let spanEl = comp.setIcon('test-1');
+  let svgEl = spanEl.childNodes[0];
+  let useEl = svgEl.childNodes[0];
+
+  // ensure first setIcon call works correctly
+  assert.equal(useEl.getAttribute('href'), '#vjs-icon-test-1', 'use should have an href set with the correct icon url');
+  assert.ok(appendSpy.calledOnce, '`appendChild` has been called');
+
+  spanEl = comp.setIcon('test-2');
+  svgEl = spanEl.childNodes[0];
+  useEl = svgEl.childNodes[0];
+
+  assert.equal(useEl.getAttribute('href'), '#vjs-icon-test-2', 'use should have an href set with the correct icon url');
+  assert.ok(replaceSpy.calledOnce, '`replaceChild` has been called');
+
+  appendSpy.restore();
+  replaceSpy.restore();
+
+  player.dispose();
+  comp.dispose();
+});
+
+QUnit.test('setIcon should append a child to the element passed into the method', function(assert) {
+  const player = TestHelpers.makePlayer({experimentalSvgIcons: true});
+
+  const comp = new Component(player);
+  const el = document.createElement('div');
+
+  comp.setIcon('test', el);
+  const spanEl = el.childNodes[0];
+  const svgEl = spanEl.childNodes[0];
+  const useEl = svgEl.childNodes[0];
+
+  assert.equal(useEl.getAttribute('href'), '#vjs-icon-test', 'href set on the element passed in');
+
+  player.dispose();
+  comp.dispose();
 });
 
 QUnit.test('addChild should throw if the child does not exist', function(assert) {
@@ -900,7 +991,7 @@ QUnit.test('should emit a tap event', function(assert) {
   ]});
   comp.trigger('touchend');
 
-  // A touchmove with a lot of movement by modifying the exisiting touch object
+  // A touchmove with a lot of movement by modifying the existing touch object
   // should not trigger a tap
   singleTouch = { pageX: 0, pageY: 0 };
   Events.trigger(comp.el(), {type: 'touchstart', touches: [singleTouch]});
@@ -909,7 +1000,7 @@ QUnit.test('should emit a tap event', function(assert) {
   Events.trigger(comp.el(), {type: 'touchmove', touches: [singleTouch]});
   comp.trigger('touchend');
 
-  // A touchmove with not much movement by modifying the exisiting touch object
+  // A touchmove with not much movement by modifying the existing touch object
   // should still allow a tap
   singleTouch = { pageX: 0, pageY: 0 };
   Events.trigger(comp.el(), {type: 'touchstart', touches: [singleTouch]});
@@ -918,7 +1009,7 @@ QUnit.test('should emit a tap event', function(assert) {
   Events.trigger(comp.el(), {type: 'touchmove', touches: [singleTouch]});
   comp.trigger('touchend');
 
-  // Reset to orignial value
+  // Reset to original value
   browser.stub_TOUCH_ENABLED(origTouch);
   comp.dispose();
 });
@@ -1434,4 +1525,116 @@ QUnit.test('a component\'s el can be replaced on dispose', function(assert) {
   assert.strictEqual(replacementEl.parentNode, this.player.el_, 'replacement was inserted');
   assert.strictEqual(Array.from(this.player.el_.childNodes).indexOf(replacementEl), prevIndex, 'replacement was inserted at same position');
 
+});
+
+QUnit.test('should be able to call `getPositions()` from a component', function(assert) {
+  const player = TestHelpers.makePlayer({});
+
+  const appendSpy = sinon.spy(player.controlBar, 'getPositions');
+
+  player.controlBar.getPositions();
+
+  assert.expect(1);
+  assert.ok(appendSpy.calledOnce, '`handleBlur` has been called');
+  player.dispose();
+});
+
+QUnit.test('getPositions() returns properties of `boundingClientRect` & `center` from elements that support it', function(assert) {
+  const player = TestHelpers.makePlayer({
+    spatialNavigation: {
+      enabled: true
+    }
+  });
+
+  assert.expect(4);
+  assert.ok(player.controlBar.getPositions().boundingClientRect, '`boundingClientRect` present in `controlBar`');
+  assert.ok(player.controlBar.getPositions().center, '`center` present in `controlBar`');
+  assert.ok(typeof player.controlBar.getPositions().boundingClientRect === 'object', '`boundingClientRect` is an object');
+  assert.ok(typeof player.controlBar.getPositions().center === 'object', '`center` is an object`');
+
+  player.dispose();
+});
+
+QUnit.test('getPositions() properties should not be empty', function(assert) {
+  const player = TestHelpers.makePlayer({
+    controls: true,
+    bigPlayButton: true,
+    spatialNavigation: { enabled: true }
+  });
+
+  function isEmpty(obj) {
+    return Object.keys(obj).length === 0;
+  }
+
+  let hasEmptyProperties = false;
+  const getPositionsProps = player.bigPlayButton.getPositions();
+
+  for (const property in getPositionsProps) {
+    const getPositionsProp = getPositionsProps[property];
+
+    for (const innerProperty in getPositionsProp) {
+      if (isEmpty(innerProperty)) {
+        hasEmptyProperties = true;
+      }
+    }
+  }
+
+  assert.expect(1);
+  assert.ok(!hasEmptyProperties, '`getPositions()` properties are not empty');
+
+  player.dispose();
+});
+
+QUnit.test('component keydown event propagation does not stop if spatial navigation is active', function(assert) {
+  // Ensure each test starts with a player that has spatial navigation enabled
+  this.player = TestHelpers.makePlayer({
+    controls: true,
+    bigPlayButton: true,
+    spatialNavigation: { enabled: true }
+  });
+
+  // Directly reference the instantiated SpatialNavigation from the player
+  this.spatialNav = this.player.spatialNavigation;
+
+  this.spatialNav.start();
+  const handlerSpy = sinon.spy(this.player, 'handleKeyDown');
+
+  // Create and dispatch a mock keydown event.
+  const event = new KeyboardEvent('keydown', { // eslint-disable-line no-undef
+    key: 'ArrowRight',
+    code: 'ArrowRight',
+    keyCode: 39,
+    location: 2,
+    repeat: true
+  });
+
+  this.player.bigPlayButton.handleKeyDown(event);
+  assert.ok(handlerSpy.calledOnce);
+
+  handlerSpy.restore();
+  this.player.dispose();
+});
+
+QUnit.test('Should be able to call `getIsAvailableToBeFocused()` even without passing an HTML element', function(assert) {
+  // Ensure each test starts with a player that has spatial navigation enabled
+  this.player = TestHelpers.makePlayer({
+    controls: true,
+    bigPlayButton: true,
+    spatialNavigation: { enabled: true }
+  });
+
+  // Directly reference the instantiated SpatialNavigation from the player
+  this.spatialNav = this.player.spatialNavigation;
+
+  const component = this.player.getChild('bigPlayButton');
+  const focusSpy = sinon.spy(component, 'getIsAvailableToBeFocused');
+
+  component.getIsAvailableToBeFocused(component.el());
+  component.getIsAvailableToBeFocused();
+
+  assert.ok(focusSpy.getCalls().length === 2, 'focus method called on component');
+
+  // Clean up
+  focusSpy.restore();
+  this.player.dispose();
 });

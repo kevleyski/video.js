@@ -4,7 +4,8 @@
 import Component from './component';
 import * as Dom from './utils/dom.js';
 import log from './utils/log.js';
-import keycode from 'keycode';
+
+/** @import Player from './player' */
 
 /**
  * Component which is clickable or keyboard actionable, but is not a
@@ -85,11 +86,13 @@ class ClickableComponent extends Component {
 
     const el = Dom.createEl(tag, props, attributes);
 
-    el.appendChild(Dom.createEl('span', {
-      className: 'vjs-icon-placeholder'
-    }, {
-      'aria-hidden': true
-    }));
+    if (!this.player_.options_.experimentalSvgIcons) {
+      el.appendChild(Dom.createEl('span', {
+        className: 'vjs-icon-placeholder'
+      }, {
+        'aria-hidden': true
+      }));
+    }
 
     this.createControlTextEl(el);
 
@@ -212,7 +215,7 @@ class ClickableComponent extends Component {
    * Event handler that is called when a `ClickableComponent` receives a
    * `click` or `tap` event.
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        The `tap` or `click` event that caused this function to be called.
    *
    * @listens tap
@@ -231,7 +234,7 @@ class ClickableComponent extends Component {
    *
    * By default, if the key is Space or Enter, it will trigger a `click` event.
    *
-   * @param {EventTarget~Event} event
+   * @param {KeyboardEvent} event
    *        The `keydown` event that caused this function to be called.
    *
    * @listens keydown
@@ -241,7 +244,7 @@ class ClickableComponent extends Component {
     // Support Space or Enter key operation to fire a click event. Also,
     // prevent the event from propagating through the DOM and triggering
     // Player hotkeys.
-    if (keycode.isEventKey(event, 'Space') || keycode.isEventKey(event, 'Enter')) {
+    if (event.key === ' ' || event.key === 'Enter') {
       event.preventDefault();
       event.stopPropagation();
       this.trigger('click');

@@ -9,7 +9,8 @@ import * as Events from '../utils/events.js';
 import {toTitleCase} from '../utils/str.js';
 import { IS_IOS } from '../utils/browser.js';
 import document from 'global/document';
-import keycode from 'keycode';
+
+/** @import Player from '../player' */
 
 /**
  * A `MenuButton` class for any popup {@link Menu}.
@@ -161,6 +162,17 @@ class MenuButton extends Component {
   }
 
   /**
+   * Overwrites the `setIcon` method from `Component`.
+   * In this case, we want the icon to be appended to the menuButton.
+   *
+   * @param {string} name
+   *         The icon name to be added.
+   */
+  setIcon(name) {
+    super.setIcon(name, this.menuButton_.el_);
+  }
+
+  /**
    * Allow sub components to stack CSS class names for the wrapper element
    *
    * @return {string}
@@ -231,7 +243,7 @@ class MenuButton extends Component {
    * Handle a click on a `MenuButton`.
    * See {@link ClickableComponent#handleClick} for instances where this is called.
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        The `keydown`, `tap`, or `click` event that caused this function to be
    *        called.
    *
@@ -249,7 +261,7 @@ class MenuButton extends Component {
   /**
    * Handle `mouseleave` for `MenuButton`.
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        The `mouseleave` event that caused this function to be called.
    *
    * @listens mouseleave
@@ -277,7 +289,7 @@ class MenuButton extends Component {
    * Handle tab, escape, down arrow, and up arrow keys for `MenuButton`. See
    * {@link ClickableComponent#handleKeyDown} for instances where this is called.
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        The `keydown` event that caused this function to be called.
    *
    * @listens keydown
@@ -285,19 +297,19 @@ class MenuButton extends Component {
   handleKeyDown(event) {
 
     // Escape or Tab unpress the 'button'
-    if (keycode.isEventKey(event, 'Esc') || keycode.isEventKey(event, 'Tab')) {
+    if (event.key === 'Esc' || event.key === 'Tab') {
       if (this.buttonPressed_) {
         this.unpressButton();
       }
 
       // Don't preventDefault for Tab key - we still want to lose focus
-      if (!keycode.isEventKey(event, 'Tab')) {
+      if (!event.key === 'Tab') {
         event.preventDefault();
         // Set focus back to the menu button's button
         this.menuButton_.focus();
       }
     // Up Arrow or Down Arrow also 'press' the button to open the menu
-    } else if (keycode.isEventKey(event, 'Up') || keycode.isEventKey(event, 'Down')) {
+    } else if ((event.key === 'Up') || event.key === 'Down' && !(this.player_.options_.playerOptions.spatialNavigation && this.player_.options_.playerOptions.spatialNavigation.enabled)) {
       if (!this.buttonPressed_) {
         event.preventDefault();
         this.pressButton();
@@ -309,14 +321,14 @@ class MenuButton extends Component {
    * Handle a `keyup` event on a `MenuButton`. The listener for this is added in
    * the constructor.
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        Key press event
    *
    * @listens keyup
    */
   handleMenuKeyUp(event) {
     // Escape hides popup menu
-    if (keycode.isEventKey(event, 'Esc') || keycode.isEventKey(event, 'Tab')) {
+    if (event.key === 'Esc' || event.key === 'Tab') {
       this.removeClass('vjs-hover');
     }
   }
@@ -326,7 +338,7 @@ class MenuButton extends Component {
    * anyone calling `handleSubmenuKeyPress` will not see their method calls
    * stop working.
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        The event that caused this function to be called.
    */
   handleSubmenuKeyPress(event) {
@@ -337,19 +349,19 @@ class MenuButton extends Component {
    * Handle a `keydown` event on a sub-menu. The listener for this is added in
    * the constructor.
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        Key press event
    *
    * @listens keydown
    */
   handleSubmenuKeyDown(event) {
     // Escape or Tab unpress the 'button'
-    if (keycode.isEventKey(event, 'Esc') || keycode.isEventKey(event, 'Tab')) {
+    if (event.key === 'Esc' || event.key === 'Tab') {
       if (this.buttonPressed_) {
         this.unpressButton();
       }
       // Don't preventDefault for Tab key - we still want to lose focus
-      if (!keycode.isEventKey(event, 'Tab')) {
+      if (!event.key === 'Tab') {
         event.preventDefault();
         // Set focus back to the menu button's button
         this.menuButton_.focus();
@@ -357,7 +369,7 @@ class MenuButton extends Component {
     } else {
       // NOTE: This is a special case where we don't pass unhandled
       //  keydown events up to the Component handler, because it is
-      //  just entending the keydown handling of the `MenuItem`
+      //  just intending the keydown handling of the `MenuItem`
       //  in the `Menu` which already passes unused keys up.
     }
   }

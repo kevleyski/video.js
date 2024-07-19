@@ -4,6 +4,9 @@
  */
 import {toTitleCase} from '../utils/str.js';
 
+/** @import Player from '../player' */
+/** @import Tech from '../tech/tech' */
+
 const middlewares = {};
 const middlewareInstances = {};
 
@@ -108,7 +111,7 @@ export function setTech(middleware, tech) {
  * @param  {string} method
  *         A method name.
  *
- * @return {Mixed}
+ * @return {*}
  *         The final value from the tech after middleware has intercepted it.
  */
 export function get(middleware, tech, method) {
@@ -128,10 +131,10 @@ export function get(middleware, tech, method) {
  * @param  {string} method
  *         A method name.
  *
- * @param  {Mixed} arg
+ * @param  {*} arg
  *         The value to set on the tech.
  *
- * @return {Mixed}
+ * @return {*}
  *         The return value of the `method` of the `tech`.
  */
 export function set(middleware, tech, method, arg) {
@@ -154,10 +157,10 @@ export function set(middleware, tech, method, arg) {
  * @param  {string} method
  *         A method name.
  *
- * @param  {Mixed} arg
+ * @param  {*} arg
  *         The value to set on the tech.
  *
- * @return {Mixed}
+ * @return {*}
  *         The return value of the `method` of the `tech`, regardless of the
  *         return values of middlewares.
  */
@@ -244,7 +247,9 @@ function executeRight(mws, method, value, terminated) {
  *         A {@link Player} instance.
  */
 export function clearCacheForPlayer(player) {
-  middlewareInstances[player.id()] = null;
+  if (middlewareInstances.hasOwnProperty(player.id())) {
+    delete middlewareInstances[player.id()];
+  }
 }
 
 /**

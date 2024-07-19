@@ -6,6 +6,11 @@ import Component from '../../component.js';
 import ChaptersTrackMenuItem from './chapters-track-menu-item.js';
 import {toTitleCase} from '../../utils/str.js';
 
+/** @import Player from '../../player' */
+/** @import Menu from '../../menu/menu' */
+/** @import TextTrack from '../../tracks/text-track' */
+/** @import TextTrackMenuItem from '../text-track-controls/text-track-menu-item' */
+
 /**
  * The button component for toggling and selecting chapters
  * Chapters act much differently than other text tracks
@@ -24,11 +29,13 @@ class ChaptersButton extends TextTrackButton {
    * @param {Object} [options]
    *        The key/value store of player options.
    *
-   * @param {Component~ReadyCallback} [ready]
+   * @param {Function} [ready]
    *        The function to call when this function is ready.
    */
   constructor(player, options, ready) {
     super(player, options, ready);
+
+    this.setIcon('chapters');
 
     this.selectCurrentItem_ = () => {
       this.items.forEach(item => {
@@ -54,7 +61,7 @@ class ChaptersButton extends TextTrackButton {
   /**
    * Update the menu based on the current state of its items.
    *
-   * @param {EventTarget~Event} [event]
+   * @param {Event} [event]
    *        An event that triggered this function to run.
    *
    * @listens TextTrackList#addtrack
@@ -169,7 +176,7 @@ class ChaptersButton extends TextTrackButton {
   /**
    * Create a menu item for each text track
    *
-   * @return {TextTrackMenuItem[]}
+   * @return  {TextTrackMenuItem[]}
    *         Array of menu items
    */
   createItems() {

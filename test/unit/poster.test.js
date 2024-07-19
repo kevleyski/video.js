@@ -42,6 +42,12 @@ QUnit.test('should mirror crossOrigin', function(assert) {
 
 });
 
+QUnit.test('should populate an alt attribute', function(assert) {
+  const posterImage = new PosterImage(this.mockPlayer);
+
+  assert.ok(posterImage.$('img').hasAttribute('alt'), 'img has alt atttribute');
+});
+
 QUnit.test('should remove itself from the document flow when there is no poster', function(assert) {
   const posterImage = new PosterImage(this.mockPlayer);
 
@@ -55,6 +61,7 @@ QUnit.test('should remove itself from the document flow when there is no poster'
     true,
     'Poster image hides with an empty source'
   );
+  assert.equal(posterImage.$('img'), null, 'Poster image with no source has no img el');
 
   // Updated with a valid source
   this.mockPlayer.poster_ = this.poster2;
@@ -64,6 +71,7 @@ QUnit.test('should remove itself from the document flow when there is no poster'
     false,
     'Poster image shows again when there is a source'
   );
+  assert.ok(posterImage.$('img'), 'Poster image with source restores img el');
 
   posterImage.dispose();
 });

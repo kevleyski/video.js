@@ -5,6 +5,8 @@ import Component from '../../component';
 import * as Dom from '../../utils/dom.js';
 import * as Fn from '../../utils/fn.js';
 
+/** @import Player from '../../player' */
+
 /**
  * Volume level tooltips display a volume above or side by side the volume bar.
  *

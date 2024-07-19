@@ -4,11 +4,13 @@
  */
 import { createTimeRange } from './time.js';
 
+/** @import { TimeRange } from './time' */
+
 /**
  * Compute the percentage of the media that has been buffered.
  *
  * @param {TimeRange} buffered
- *        The current `TimeRange` object representing buffered time ranges
+ *        The current `TimeRanges` object representing buffered time ranges
  *
  * @param {number} duration
  *        Total duration of the media

@@ -5,6 +5,8 @@ import TextTrackButton from './text-track-button.js';
 import Component from '../../component.js';
 import * as Fn from '../../utils/fn.js';
 
+/** @import Player from '../../player' */
+
 /**
  * The button component for toggling and selecting descriptions
  *
@@ -21,11 +23,13 @@ class DescriptionsButton extends TextTrackButton {
    * @param {Object} [options]
    *        The key/value store of player options.
    *
-   * @param {Component~ReadyCallback} [ready]
+   * @param {Function} [ready]
    *        The function to call when this component is ready.
    */
   constructor(player, options, ready) {
     super(player, options, ready);
+
+    this.setIcon('audio-description');
 
     const tracks = player.textTracks();
     const changeHandler = Fn.bind_(this, this.handleTracksChange);
@@ -39,7 +43,7 @@ class DescriptionsButton extends TextTrackButton {
   /**
    * Handle text track change
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        The event that caused this function to run
    *
    * @listens TextTrackList#change

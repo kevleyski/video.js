@@ -2,6 +2,9 @@
  * @file video.js
  * @module videojs
  */
+/**
+ * @typedef { string } version
+ */
 import {version} from '../../package.json';
 import window from 'global/window';
 import {
@@ -31,11 +34,14 @@ import * as Dom from './utils/dom.js';
 import * as browser from './utils/browser.js';
 import * as Url from './utils/url.js';
 import * as Obj from './utils/obj';
+import VjsErrors from './consts/errors';
 import xhr from '@videojs/xhr';
 
 // Include the built-in techs
 import Tech from './tech/tech.js';
 import { use as middlewareUse, TERMINATOR } from './tech/middleware.js';
+
+/** @import { PlayerReadyCallback } from './player' */
 
 /**
  * Normalize an `id` value by trimming off a leading `#`
@@ -48,13 +54,6 @@ import { use as middlewareUse, TERMINATOR } from './tech/middleware.js';
  *          The string, without any leading `#`.
  */
 const normalizeId = (id) => id.indexOf('#') === 0 ? id.slice(1) : id;
-
-/**
- * A callback that is called when a component is ready. Does not have any
- * parameters and any callback value will be ignored. See: {@link Component~ReadyCallback}
- *
- * @callback ReadyCallback
- */
 
 /**
  * The `videojs()` function doubles as the main function for users to create a
@@ -117,7 +116,7 @@ const normalizeId = (id) => id.indexOf('#') === 0 ? id.slice(1) : id;
  *         Options object for providing settings.
  *         See: [Options Guide](https://docs.videojs.com/tutorial-options.html).
  *
- * @param  {ReadyCallback} [ready]
+ * @param  {PlayerReadyCallback} [ready]
  *         A function to be called when the {@link Player} and {@link Tech} are
  *         ready.
  *
@@ -149,7 +148,12 @@ function videojs(id, options, ready) {
   // This will make sure that the element is indeed in the dom of that document.
   // Additionally, check that the document in question has a default view.
   // If the document is no longer attached to the dom, the defaultView of the document will be null.
-  if (!el.ownerDocument.defaultView || !el.ownerDocument.body.contains(el)) {
+  // If element is inside Shadow DOM (e.g. is part of a Custom element), ownerDocument.body
+  // always returns false. Instead, use the Shadow DOM root.
+  const inShadowDom = 'getRootNode' in el ? el.getRootNode() instanceof window.ShadowRoot : false;
+  const rootNode = inShadowDom ? el.getRootNode() : el.ownerDocument.body;
+
+  if (!el.ownerDocument.defaultView || !rootNode.contains(el)) {
     log.warn('The element supplied is not included in the DOM');
   }
 
@@ -158,7 +162,7 @@ function videojs(id, options, ready) {
   // Store a copy of the el before modification, if it is to be restored in destroy()
   // If div ingest, store the parent div
   if (options.restoreEl === true) {
-    options.restoreEl = (el.parentNode && el.parentNode.hasAttribute('data-vjs-player') ? el.parentNode : el).cloneNode(true);
+    options.restoreEl = (el.parentNode && el.parentNode.hasAttribute && el.parentNode.hasAttribute('data-vjs-player') ? el.parentNode : el).cloneNode(true);
   }
 
   hooks('beforesetup').forEach((hookFunction) => {
@@ -312,10 +316,10 @@ videojs.getComponent = Component.getComponent;
  * @param {string} name
  *        The class name of the component
  *
- * @param {Component} comp
+ * @param {typeof Component} comp
  *        The component class
  *
- * @return {Component}
+ * @return {typeof Component}
  *         The newly registered component
  */
 videojs.registerComponent = (name, comp) => {
@@ -323,7 +327,7 @@ videojs.registerComponent = (name, comp) => {
     log.warn(`The ${name} tech was registered as a component. It should instead be registered using videojs.registerTech(name, tech)`);
   }
 
-  Component.registerComponent.call(Component, name, comp);
+  return Component.registerComponent.call(Component, name, comp);
 };
 
 videojs.getTech = Tech.getTech;
@@ -402,9 +406,11 @@ videojs.deregisterPlugin = Plugin.deregisterPlugin;
  *
  * @param {string} name
  *        The plugin name
- *
- * @param {Plugin|Function} plugin
+*
+ * @param {typeof Plugin|Function} plugin
  *         The plugin sub-class or function
+ *
+ * @return {typeof Plugin|Function}
  */
 videojs.plugin = (name, plugin) => {
   log.warn('videojs.plugin() is deprecated; use videojs.registerPlugin() instead');
@@ -606,5 +612,8 @@ videojs.str = Str;
  * @see {@link module:url|url}
  */
 videojs.url = Url;
+
+// The list of possible error types to occur in video.js
+videojs.Error = VjsErrors;
 
 export default videojs;

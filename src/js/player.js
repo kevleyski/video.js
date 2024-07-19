@@ -34,7 +34,8 @@ import filterSource from './utils/filter-source';
 import {getMimetype, findMimetype} from './utils/mimetypes';
 import {hooks} from './utils/hooks';
 import {isObject} from './utils/obj';
-import keycode from 'keycode';
+import icons from '../images/icons.svg';
+import SpatialNavigation from './spatial-navigation.js';
 
 // The following imports are used only to ensure that the corresponding modules
 // are always included in the video.js package. Importing the modules will
@@ -51,9 +52,19 @@ import './tracks/text-track-settings.js';
 import './resize-manager.js';
 import './live-tracker.js';
 import './title-bar.js';
+import './transient-button.js';
 
 // Import Html5 tech, at least for disposing the original video tag.
 import './tech/html5.js';
+
+/** @import { TimeRange } from './utils/time' */
+/** @import HtmlTrackElement from './tracks/html-track-element' */
+
+/**
+ * @callback PlayerReadyCallback
+ * @this     {Player}
+ * @returns  {void}
+ */
 
 // The following tech events are simply re-triggered
 // on the player when they happen
@@ -62,7 +73,7 @@ const TECH_EVENTS_RETRIGGER = [
    * Fired while the user agent is downloading media data.
    *
    * @event Player#progress
-   * @type {EventTarget~Event}
+   * @type {Event}
    */
   /**
    * Retrigger the `progress` event that was triggered by the {@link Tech}.
@@ -78,7 +89,7 @@ const TECH_EVENTS_RETRIGGER = [
    * Fires when the loading of an audio/video is aborted.
    *
    * @event Player#abort
-   * @type {EventTarget~Event}
+   * @type {Event}
    */
   /**
    * Retrigger the `abort` event that was triggered by the {@link Tech}.
@@ -94,7 +105,7 @@ const TECH_EVENTS_RETRIGGER = [
    * Fires when the browser is intentionally not getting media data.
    *
    * @event Player#suspend
-   * @type {EventTarget~Event}
+   * @type {Event}
    */
   /**
    * Retrigger the `suspend` event that was triggered by the {@link Tech}.
@@ -110,7 +121,7 @@ const TECH_EVENTS_RETRIGGER = [
    * Fires when the current playlist is empty.
    *
    * @event Player#emptied
-   * @type {EventTarget~Event}
+   * @type {Event}
    */
   /**
    * Retrigger the `emptied` event that was triggered by the {@link Tech}.
@@ -125,7 +136,7 @@ const TECH_EVENTS_RETRIGGER = [
    * Fires when the browser is trying to get media data, but data is not available.
    *
    * @event Player#stalled
-   * @type {EventTarget~Event}
+   * @type {Event}
    */
   /**
    * Retrigger the `stalled` event that was triggered by the {@link Tech}.
@@ -141,7 +152,7 @@ const TECH_EVENTS_RETRIGGER = [
    * Fires when the browser has loaded meta data for the audio/video.
    *
    * @event Player#loadedmetadata
-   * @type {EventTarget~Event}
+   * @type {Event}
    */
   /**
    * Retrigger the `loadedmetadata` event that was triggered by the {@link Tech}.
@@ -283,11 +294,13 @@ const DEFAULT_BREAKPOINTS = {
  * An instance of the `Player` class is created when any of the Video.js setup methods
  * are used to initialize a video.
  *
- * After an instance has been created it can be accessed globally in two ways:
- * 1. By calling `videojs('example_video_1');`
- * 2. By using it directly via  `videojs.players.example_video_1;`
+ * After an instance has been created it can be accessed globally in three ways:
+ * 1. By calling `videojs.getPlayer('example_video_1');`
+ * 2. By calling `videojs('example_video_1');` (not recommended)
+ * 2. By using it directly via `videojs.players.example_video_1;`
  *
  * @extends Component
+ * @global
  */
 class Player extends Component {
 
@@ -300,11 +313,12 @@ class Player extends Component {
    * @param {Object} [options]
    *        Object of option names and values.
    *
-   * @param {Component~ReadyCallback} [ready]
+   * @param {PlayerReadyCallback} [ready]
    *        Ready callback function.
    */
   constructor(tag, options, ready) {
     // Make sure tag ID exists
+    // also here.. probably better
     tag.id = tag.id || options.id || `vjs_video_${Guid.newGUID()}`;
 
     // Set Options
@@ -355,6 +369,8 @@ class Player extends Component {
     this.boundHandleTechTouchEnd_ = (e) => this.handleTechTouchEnd_(e);
     this.boundHandleTechTap_ = (e) => this.handleTechTap_(e);
 
+    this.boundUpdatePlayerHeightOnAudioOnlyMode_ = (e) => this.updatePlayerHeightOnAudioOnlyMode_(e);
+
     // default isFullscreen_ to false
     this.isFullscreen_ = false;
 
@@ -391,6 +407,7 @@ class Player extends Component {
 
     // Init state audioOnlyCache_
     this.audioOnlyCache_ = {
+      controlBarHeight: null,
       playerHeight: null,
       hiddenChildren: []
     };
@@ -430,9 +447,11 @@ class Player extends Component {
     this.resetCache_();
 
     // Set poster
+    /** @type string */
     this.poster_ = options.poster || '';
 
     // Set controls
+    /** @type {boolean} */
     this.controls_ = !!options.controls;
 
     // Original tag settings stored in options
@@ -512,6 +531,25 @@ class Player extends Component {
 
     this.playbackRates(options.playbackRates);
 
+    if (options.experimentalSvgIcons) {
+      // Add SVG Sprite to the DOM
+      const parser = new window.DOMParser();
+      const parsedSVG = parser.parseFromString(icons, 'image/svg+xml');
+      const errorNode = parsedSVG.querySelector('parsererror');
+
+      if (errorNode) {
+        log.warn('Failed to load SVG Icons. Falling back to Font Icons.');
+        this.options_.experimentalSvgIcons = null;
+      } else {
+        const sprite = parsedSVG.documentElement;
+
+        sprite.style.display = 'none';
+        this.el_.appendChild(sprite);
+
+        this.addClass('vjs-svg-icons-enabled');
+      }
+    }
+
     this.initChildren();
 
     // Set isAudio based on whether or not an audio tag was used
@@ -535,6 +573,13 @@ class Player extends Component {
 
     if (this.isAudio()) {
       this.addClass('vjs-audio');
+    }
+
+    // Check if spatial navigation is enabled in the options.
+    // If enabled, instantiate the SpatialNavigation class.
+    if (options.spatialNavigation && options.spatialNavigation.enabled) {
+      this.spatialNavigation = new SpatialNavigation(this);
+      this.addClass('vjs-spatial-navigation-enabled');
     }
 
     // TODO: Make this smarter. Toggle user state between touching/mousing
@@ -593,7 +638,7 @@ class Player extends Component {
      * Called when the player is being disposed of.
      *
      * @event Player#dispose
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('dispose');
     // prevent dispose from being called twice
@@ -751,8 +796,22 @@ class Player extends Component {
     // Default state of video is paused
     this.addClass('vjs-paused');
 
+    const deviceClassNames = [
+      'IS_SMART_TV',
+      'IS_TIZEN',
+      'IS_WEBOS',
+      'IS_ANDROID',
+      'IS_IPAD',
+      'IS_IPHONE',
+      'IS_CHROMECAST_RECEIVER'
+    ].filter(key => browser[key]).map(key => {
+      return 'vjs-device-' + key.substring(3).toLowerCase().replace(/\_/g, '-');
+    });
+
+    this.addClass(...deviceClassNames);
+
     // Add a style element in the player that we'll use to set the width/height
-    // of the player in a way that's still overrideable by CSS, just like the
+    // of the player in a way that's still overridable by CSS, just like the
     // video element
     if (window.VIDEOJS_NO_DYNAMIC_STYLE !== true) {
       this.styleEl_ = stylesheet.createStyleElement('vjs-styles-dimensions');
@@ -851,11 +910,12 @@ class Player extends Component {
    * A getter/setter for the `Player`'s width. Returns the player's configured value.
    * To get the current width use `currentWidth()`.
    *
-   * @param {number} [value]
-   *        The value to set the `Player`'s width to.
+   * @param {number|string} [value]
+   *        CSS value to set the `Player`'s width to.
    *
-   * @return {number}
-   *         The current width of the `Player` when getting.
+   * @return {number|undefined}
+   *         - The current width of the `Player` when getting.
+   *         - Nothing when setting
    */
   width(value) {
     return this.dimension('width', value);
@@ -865,11 +925,12 @@ class Player extends Component {
    * A getter/setter for the `Player`'s height. Returns the player's configured value.
    * To get the current height use `currentheight()`.
    *
-   * @param {number} [value]
-   *        The value to set the `Player`'s heigth to.
+   * @param {number|string} [value]
+   *        CSS value to set the `Player`'s height to.
    *
-   * @return {number}
-   *         The current height of the `Player` when getting.
+   * @return {number|undefined}
+   *         - The current height of the `Player` when getting.
+   *         - Nothing when setting
    */
   height(value) {
     return this.dimension('height', value);
@@ -883,7 +944,7 @@ class Player extends Component {
    *        - 'width'
    *        - 'height'
    *
-   * @param {number} [value]
+   * @param {number|string} [value]
    *        Value for dimension specified in the first argument.
    *
    * @return {number}
@@ -1067,7 +1128,7 @@ class Player extends Component {
       // Use any width that's been specifically set
       width = this.width_;
     } else if (this.height_ !== undefined) {
-      // Or calulate the width from the aspect ratio if a height has been set
+      // Or calculate the width from the aspect ratio if a height has been set
       width = this.height_ / ratioMultiplier;
     } else {
       // Or use the video's metadata, or use the video el's default of 300
@@ -1302,6 +1363,26 @@ class Player extends Component {
   }
 
   /**
+   * An object that contains Video.js version.
+   *
+   * @typedef {Object} PlayerVersion
+   *
+   * @property {string} 'video.js' - Video.js version
+   */
+
+  /**
+   * Returns an object with Video.js version.
+   *
+   * @return {PlayerVersion}
+   *          An object with Video.js version.
+   */
+  version() {
+    return {
+      'video.js': version
+    };
+  }
+
+  /**
    * Set up click and touch listeners for the playback element
    *
    * - On desktops: a click on the video itself will toggle playback
@@ -1401,7 +1482,7 @@ class Player extends Component {
        * Fired when the user agent begins looking for media data
        *
        * @event Player#loadstart
-       * @type {EventTarget~Event}
+       * @type {Event}
        */
       this.trigger('loadstart');
     } else {
@@ -1564,7 +1645,7 @@ class Player extends Component {
    * __To use this, pass `enableSourceset` option to the player.__
    *
    * @event Player#sourceset
-   * @type {EventTarget~Event}
+   * @type {Event}
    * @prop {string} src
    *                The source url available when the `sourceset` was triggered.
    *                It will be an empty string if we cannot know what the source is
@@ -1611,7 +1692,7 @@ class Player extends Component {
             return;
           }
 
-          const techSrc = this.techGet('currentSrc');
+          const techSrc = this.techGet_('currentSrc');
 
           this.lastSource_.tech = techSrc;
           this.updateSourceCaches_(techSrc);
@@ -1675,7 +1756,7 @@ class Player extends Component {
      * playback has started or resumed.
      *
      * @event Player#play
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('play');
   }
@@ -1719,7 +1800,7 @@ class Player extends Component {
      * A readyState change on the DOM element has caused playback to stop.
      *
      * @event Player#waiting
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('waiting');
 
@@ -1750,7 +1831,7 @@ class Player extends Component {
      * The media has a readyState of HAVE_FUTURE_DATA or greater.
      *
      * @event Player#canplay
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('canplay');
   }
@@ -1769,7 +1850,7 @@ class Player extends Component {
      * entire media file can be played without buffering.
      *
      * @event Player#canplaythrough
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('canplaythrough');
   }
@@ -1787,7 +1868,7 @@ class Player extends Component {
      * The media is no longer blocked from playback, and has started playing.
      *
      * @event Player#playing
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('playing');
   }
@@ -1805,7 +1886,7 @@ class Player extends Component {
      * Fired whenever the player is jumping to a new time
      *
      * @event Player#seeking
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('seeking');
   }
@@ -1823,7 +1904,7 @@ class Player extends Component {
      * Fired when the player has finished jumping to a new time
      *
      * @event Player#seeked
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('seeked');
   }
@@ -1842,7 +1923,7 @@ class Player extends Component {
      * Fired whenever the media has been paused
      *
      * @event Player#pause
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('pause');
   }
@@ -1868,7 +1949,7 @@ class Player extends Component {
      * Fired when the end of the media resource is reached (currentTime == duration)
      *
      * @event Player#ended
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('ended');
   }
@@ -1886,7 +1967,7 @@ class Player extends Component {
   /**
    * Handle a click on the media element to play/pause
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        the event that caused this function to trigger
    *
    * @listens Tech#click
@@ -1925,7 +2006,7 @@ class Player extends Component {
   /**
    * Handle a double-click on the media element to enter/exit fullscreen
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        the event that caused this function to trigger
    *
    * @listens Tech#dblclick
@@ -2011,7 +2092,7 @@ class Player extends Component {
   /**
    * Handle touch to end
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        the touchend event that triggered
    *        this function
    *
@@ -2053,8 +2134,6 @@ class Player extends Component {
 
     if (!isFs && el.matches) {
       isFs = el.matches(':' + this.fsApi_.fullscreen);
-    } else if (!isFs && el.msMatchesSelector) {
-      isFs = el.msMatchesSelector(':' + this.fsApi_.fullscreen);
     }
 
     this.isFullscreen(isFs);
@@ -2063,7 +2142,7 @@ class Player extends Component {
   /**
    * Handle Tech Fullscreen Change
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        the fullscreenchange event that triggered this function
    *
    * @param {Object} data
@@ -2103,7 +2182,7 @@ class Player extends Component {
   /**
    * Handle Tech Enter Picture-in-Picture.
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        the enterpictureinpicture event that triggered this function
    *
    * @private
@@ -2116,7 +2195,7 @@ class Player extends Component {
   /**
    * Handle Tech Leave Picture-in-Picture.
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        the leavepictureinpicture event that triggered this function
    *
    * @private
@@ -2135,7 +2214,9 @@ class Player extends Component {
   handleTechError_() {
     const error = this.tech_.error();
 
-    this.error(error);
+    if (error) {
+      this.error(error);
+    }
   }
 
   /**
@@ -2156,7 +2237,7 @@ class Player extends Component {
      * Fires when we get a textdata event from tech
      *
      * @event Player#textdata
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('textdata', data);
   }
@@ -2207,7 +2288,7 @@ class Player extends Component {
    * @param {string} [method]
    *        the method to call
    *
-   * @param {Object} arg
+   * @param {Object} [arg]
    *        the argument to pass
    *
    * @private
@@ -2313,6 +2394,7 @@ class Player extends Component {
     this.playCallbacks_.push(callback);
 
     const isSrcReady = Boolean(!this.changingSrc_ && (this.src() || this.currentSrc()));
+    const isSafariOrIOS = Boolean(browser.IS_ANY_SAFARI || browser.IS_IOS);
 
     // treat calls to play_ somewhat like the `one` event function
     if (this.waitToPlay_) {
@@ -2330,7 +2412,7 @@ class Player extends Component {
 
       // if we are in Safari, there is a high chance that loadstart will trigger after the gesture timeperiod
       // in that case, we need to prime the video element by calling load so it'll be ready in time
-      if (!isSrcReady && (browser.IS_ANY_SAFARI || browser.IS_IOS)) {
+      if (!isSrcReady && isSafariOrIOS) {
         this.load();
       }
       return;
@@ -2339,6 +2421,12 @@ class Player extends Component {
     // If the player/tech is ready and we have a source, we can attempt playback.
     const val = this.techGet_('play');
 
+    // For native playback, reset the progress bar if we get a play call from a replay.
+    const isNativeReplay = isSafariOrIOS && this.hasClass('vjs-ended');
+
+    if (isNativeReplay) {
+      this.resetProgressBar_();
+    }
     // play was terminated if the returned value is null
     if (val === null) {
       this.runPlayTerminatedQueue_();
@@ -2350,7 +2438,7 @@ class Player extends Component {
   /**
    * These functions will be run when if play is terminated. If play
    * runPlayCallbacks_ is run these function will not be run. This allows us
-   * to differenciate between a terminated play and an actual call to play.
+   * to differentiate between a terminated play and an actual call to play.
    */
   runPlayTerminatedQueue_() {
     const queue = this.playTerminatedQueue_.slice(0);
@@ -2385,9 +2473,6 @@ class Player extends Component {
 
   /**
    * Pause the video playback
-   *
-   * @return {Player}
-   *         A reference to the player object this function was called on
    */
   pause() {
     this.techCall_('pause');
@@ -2418,15 +2503,16 @@ class Player extends Component {
   }
 
   /**
-   * Returns whether or not the user is "scrubbing". Scrubbing is
+   * Sets or returns whether or not the user is "scrubbing". Scrubbing is
    * when the user has clicked the progress bar handle and is
    * dragging it along the progress bar.
    *
    * @param {boolean} [isScrubbing]
    *        whether the user is or is not scrubbing
    *
-   * @return {boolean}
-   *         The value of scrubbing when getting
+   * @return {boolean|undefined}
+   *         - The value of scrubbing when getting
+   *         - Nothing when setting
    */
   scrubbing(isScrubbing) {
     if (typeof isScrubbing === 'undefined') {
@@ -2448,33 +2534,39 @@ class Player extends Component {
    * @param {number|string} [seconds]
    *        The time to seek to in seconds
    *
-   * @return {number}
+   * @return {number|undefined}
    *         - the current time in seconds when getting
+   *         - Nothing when setting
    */
   currentTime(seconds) {
-    if (typeof seconds !== 'undefined') {
-      if (seconds < 0) {
-        seconds = 0;
-      }
-      if (!this.isReady_ || this.changingSrc_ || !this.tech_ || !this.tech_.isReady_) {
-        this.cache_.initTime = seconds;
-        this.off('canplay', this.boundApplyInitTime_);
-        this.one('canplay', this.boundApplyInitTime_);
-        return;
-      }
-      this.techCall_('setCurrentTime', seconds);
-      this.cache_.initTime = 0;
+    if (seconds === undefined) {
+      // cache last currentTime and return. default to 0 seconds
+      //
+      // Caching the currentTime is meant to prevent a massive amount of reads on the tech's
+      // currentTime when scrubbing, but may not provide much performance benefit after all.
+      // Should be tested. Also something has to read the actual current time or the cache will
+      // never get updated.
+      this.cache_.currentTime = (this.techGet_('currentTime') || 0);
+      return this.cache_.currentTime;
+    }
+
+    if (seconds < 0) {
+      seconds = 0;
+    }
+
+    if (!this.isReady_ || this.changingSrc_ || !this.tech_ || !this.tech_.isReady_) {
+      this.cache_.initTime = seconds;
+      this.off('canplay', this.boundApplyInitTime_);
+      this.one('canplay', this.boundApplyInitTime_);
       return;
     }
 
-    // cache last currentTime and return. default to 0 seconds
-    //
-    // Caching the currentTime is meant to prevent a massive amount of reads on the tech's
-    // currentTime when scrubbing, but may not provide much performance benefit afterall.
-    // Should be tested. Also something has to read the actual current time or the cache will
-    // never get updated.
-    this.cache_.currentTime = (this.techGet_('currentTime') || 0);
-    return this.cache_.currentTime;
+    this.techCall_('setCurrentTime', seconds);
+    this.cache_.initTime = 0;
+
+    if (isFinite(seconds)) {
+      this.cache_.currentTime = Number(seconds);
+    }
   }
 
   /**
@@ -2499,8 +2591,9 @@ class Player extends Component {
    * @param {number} [seconds]
    *        The duration of the video to set in seconds
    *
-   * @return {number}
+   * @return {number|undefined}
    *         - The duration of the video in seconds when getting
+   *         - Nothing when setting
    */
   duration(seconds) {
     if (seconds === undefined) {
@@ -2530,7 +2623,7 @@ class Player extends Component {
 
         /**
          * @event Player#durationchange
-         * @type {EventTarget~Event}
+         * @type {Event}
          */
         this.trigger('durationchange');
       }
@@ -2549,7 +2642,7 @@ class Player extends Component {
   }
 
   /**
-   * A remaining time function that is intented to be used when
+   * A remaining time function that is intended to be used when
    * the time is to be displayed directly to the user.
    *
    * @return {number}
@@ -2570,7 +2663,7 @@ class Player extends Component {
    * @see [Buffered Spec]{@link http://dev.w3.org/html5/spec/video.html#dom-media-buffered}
    *
    * @return {TimeRange}
-   *         A mock TimeRange object (following HTML spec)
+   *         A mock {@link TimeRanges} object (following HTML spec)
    */
   buffered() {
     let buffered = this.techGet_('buffered');
@@ -2580,6 +2673,92 @@ class Player extends Component {
     }
 
     return buffered;
+  }
+
+  /**
+   * Get the TimeRanges of the media that are currently available
+   * for seeking to.
+   *
+   * @see [Seekable Spec]{@link https://html.spec.whatwg.org/multipage/media.html#dom-media-seekable}
+   *
+   * @return {TimeRange}
+   *         A mock {@link TimeRanges} object (following HTML spec)
+   */
+  seekable() {
+    let seekable = this.techGet_('seekable');
+
+    if (!seekable || !seekable.length) {
+      seekable = createTimeRange(0, 0);
+    }
+
+    return seekable;
+  }
+
+  /**
+   * Returns whether the player is in the "seeking" state.
+   *
+   * @return {boolean} True if the player is in the seeking state, false if not.
+   */
+  seeking() {
+    return this.techGet_('seeking');
+  }
+
+  /**
+   * Returns whether the player is in the "ended" state.
+   *
+   * @return {boolean} True if the player is in the ended state, false if not.
+   */
+  ended() {
+    return this.techGet_('ended');
+  }
+
+  /**
+   * Returns the current state of network activity for the element, from
+   * the codes in the list below.
+   * - NETWORK_EMPTY (numeric value 0)
+   *   The element has not yet been initialised. All attributes are in
+   *   their initial states.
+   * - NETWORK_IDLE (numeric value 1)
+   *   The element's resource selection algorithm is active and has
+   *   selected a resource, but it is not actually using the network at
+   *   this time.
+   * - NETWORK_LOADING (numeric value 2)
+   *   The user agent is actively trying to download data.
+   * - NETWORK_NO_SOURCE (numeric value 3)
+   *   The element's resource selection algorithm is active, but it has
+   *   not yet found a resource to use.
+   *
+   * @see https://html.spec.whatwg.org/multipage/embedded-content.html#network-states
+   * @return {number} the current network activity state
+   */
+  networkState() {
+    return this.techGet_('networkState');
+  }
+
+  /**
+   * Returns a value that expresses the current state of the element
+   * with respect to rendering the current playback position, from the
+   * codes in the list below.
+   * - HAVE_NOTHING (numeric value 0)
+   *   No information regarding the media resource is available.
+   * - HAVE_METADATA (numeric value 1)
+   *   Enough of the resource has been obtained that the duration of the
+   *   resource is available.
+   * - HAVE_CURRENT_DATA (numeric value 2)
+   *   Data for the immediate current playback position is available.
+   * - HAVE_FUTURE_DATA (numeric value 3)
+   *   Data for the immediate current playback position is available, as
+   *   well as enough data for the user agent to advance the current
+   *   playback position in the direction of playback.
+   * - HAVE_ENOUGH_DATA (numeric value 4)
+   *   The user agent estimates that enough data is available for
+   *   playback to proceed uninterrupted.
+   *
+   * @see https://html.spec.whatwg.org/multipage/embedded-content.html#dom-media-readystate
+   * @return {number} the current playback rendering state
+   */
+  readyState() {
+    return this.techGet_('readyState');
   }
 
   /**
@@ -2622,7 +2801,7 @@ class Player extends Component {
    *         - 1.0 is 100%/full
    *         - 0.5 is half volume or 50%
    *
-   * @return {number}
+   * @return {number|undefined}
    *         The current volume as a percent when getting
    */
   volume(percentAsDecimal) {
@@ -2630,7 +2809,7 @@ class Player extends Component {
 
     if (percentAsDecimal !== undefined) {
       // Force value to between 0 and 1
-      vol = Math.max(0, Math.min(1, parseFloat(percentAsDecimal)));
+      vol = Math.max(0, Math.min(1, percentAsDecimal));
       this.cache_.volume = vol;
       this.techCall_('setVolume', vol);
 
@@ -2653,9 +2832,10 @@ class Player extends Component {
    *        - true to mute
    *        - false to unmute
    *
-   * @return {boolean}
+   * @return {boolean|undefined}
    *         - true if mute is on and getting
    *         - false if mute is off and getting
+   *         - nothing if setting
    */
   muted(muted) {
     if (muted !== undefined) {
@@ -2686,14 +2866,14 @@ class Player extends Component {
    *        - true to mute
    *        - false to unmute
    *
-   * @return {boolean|Player}
+   * @return {boolean|undefined}
    *         - true if defaultMuted is on and getting
    *         - false if defaultMuted is off and getting
-   *         - A reference to the current player when setting
+   *         - Nothing when setting
    */
   defaultMuted(defaultMuted) {
     if (defaultMuted !== undefined) {
-      return this.techCall_('setDefaultMuted', defaultMuted);
+      this.techCall_('setDefaultMuted', defaultMuted);
     }
     return this.techGet_('defaultMuted') || false;
   }
@@ -2707,8 +2887,9 @@ class Player extends Component {
    *         - 1.0 is 100%/full
    *         - 0.5 is half volume or 50%
    *
-   * @return {number}
-   *         the current value of lastVolume as a percent when getting
+   * @return {number|undefined}
+   *         - The current value of lastVolume as a percent when getting
+   *         - Nothing when setting
    *
    * @private
    */
@@ -2742,9 +2923,10 @@ class Player extends Component {
    * @param  {boolean} [isFS]
    *         Set the players current fullscreen state
    *
-   * @return {boolean}
+   * @return {boolean|undefined}
    *         - true if fullscreen is on and getting
    *         - false if fullscreen is off and getting
+   *         - Nothing when setting
    */
   isFullscreen(isFS) {
     if (isFS !== undefined) {
@@ -2758,7 +2940,7 @@ class Player extends Component {
       if (this.isFullscreen_ !== oldValue && this.fsApi_.prefixed) {
         /**
            * @event Player#fullscreenchange
-           * @type {EventTarget~Event}
+           * @type {Event}
            */
         this.trigger('fullscreenchange');
       }
@@ -2784,6 +2966,10 @@ class Player extends Component {
    * @fires Player#fullscreenchange
    */
   requestFullscreen(fullscreenOptions) {
+    if (this.isInPictureInPicture()) {
+      this.exitPictureInPicture();
+    }
+
     const self = this;
 
     return new Promise((resolve, reject) => {
@@ -2929,7 +3115,7 @@ class Player extends Component {
 
     /**
      * @event Player#enterFullWindow
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('enterFullWindow');
   }
@@ -2942,7 +3128,7 @@ class Player extends Component {
    *        Event to check for key press
    */
   fullWindowOnEscKey(event) {
-    if (keycode.isEventKey(event, 'Esc')) {
+    if (event.key === 'Escape') {
       if (this.isFullscreen() === true) {
         if (!this.isFullWindow) {
           this.exitFullscreen();
@@ -2973,15 +3159,15 @@ class Player extends Component {
     // this.positionAll();
     /**
      * @event Player#exitFullWindow
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('exitFullWindow');
   }
 
   /**
-   * Disable Picture-in-Picture mode.
+   * Get or set disable Picture-in-Picture mode.
    *
-   * @param {boolean} value
+   * @param {boolean} [value]
    *                  - true will disable Picture-in-Picture mode
    *                  - false will enable Picture-in-Picture mode
    */
@@ -3001,9 +3187,10 @@ class Player extends Component {
    * @param  {boolean} [isPiP]
    *         Set the players current Picture-in-Picture state
    *
-   * @return {boolean}
+   * @return {boolean|undefined}
    *         - true if Picture-in-Picture is on and getting
    *         - false if Picture-in-Picture is off and getting
+   *         - nothing if setting
    */
   isInPictureInPicture(isPiP) {
     if (isPiP !== undefined) {
@@ -3019,7 +3206,14 @@ class Player extends Component {
    * continue consuming media while they interact with other content sites, or
    * applications on their device.
    *
-   * @see [Spec]{@link https://wicg.github.io/picture-in-picture}
+   * This can use document picture-in-picture or element picture in picture
+   *
+   * Set `enableDocumentPictureInPicture` to `true` to use docPiP on a supported browser
+   * Else set `disablePictureInPicture` to `false` to disable elPiP on a supported browser
+   *
+   *
+   * @see [Spec]{@link https://w3c.github.io/picture-in-picture/}
+   * @see [Spec]{@link https://wicg.github.io/document-picture-in-picture/}
    *
    * @fires Player#enterpictureinpicture
    *
@@ -3027,15 +3221,55 @@ class Player extends Component {
    *         A promise with a Picture-in-Picture window.
    */
   requestPictureInPicture() {
+    if (this.options_.enableDocumentPictureInPicture && window.documentPictureInPicture) {
+      const pipContainer = document.createElement(this.el().tagName);
+
+      pipContainer.classList = this.el().classList;
+      pipContainer.classList.add('vjs-pip-container');
+      if (this.posterImage) {
+        pipContainer.appendChild(this.posterImage.el().cloneNode(true));
+      }
+      if (this.titleBar) {
+        pipContainer.appendChild(this.titleBar.el().cloneNode(true));
+      }
+      pipContainer.appendChild(Dom.createEl('p', { className: 'vjs-pip-text' }, {}, this.localize('Playing in picture-in-picture')));
+
+      return window.documentPictureInPicture.requestWindow({
+        // The aspect ratio won't be correct, Chrome bug https://crbug.com/1407629
+        width: this.videoWidth(),
+        height: this.videoHeight()
+      }).then(pipWindow => {
+        Dom.copyStyleSheetsToWindow(pipWindow);
+        this.el_.parentNode.insertBefore(pipContainer, this.el_);
+
+        pipWindow.document.body.appendChild(this.el_);
+        pipWindow.document.body.classList.add('vjs-pip-window');
+
+        this.player_.isInPictureInPicture(true);
+        this.player_.trigger({type: 'enterpictureinpicture', pipWindow});
+
+        // Listen for the PiP closing event to move the video back.
+        pipWindow.addEventListener('pagehide', (event) => {
+          const pipVideo = event.target.querySelector('.video-js');
+
+          pipContainer.parentNode.replaceChild(pipVideo, pipContainer);
+          this.player_.isInPictureInPicture(false);
+          this.player_.trigger('leavepictureinpicture');
+        });
+
+        return pipWindow;
+      });
+    }
     if ('pictureInPictureEnabled' in document && this.disablePictureInPicture() === false) {
       /**
        * This event fires when the player enters picture in picture mode
        *
        * @event Player#enterpictureinpicture
-       * @type {EventTarget~Event}
+       * @type {Event}
        */
       return this.techGet_('requestPictureInPicture');
     }
+    return Promise.reject('No PiP mode is available');
   }
 
   /**
@@ -3049,12 +3283,18 @@ class Player extends Component {
    *         A promise.
    */
   exitPictureInPicture() {
+    if (window.documentPictureInPicture && window.documentPictureInPicture.window) {
+      // With documentPictureInPicture, Player#leavepictureinpicture is fired in the pagehide handler
+      window.documentPictureInPicture.window.close();
+      return Promise.resolve();
+    }
     if ('pictureInPictureEnabled' in document) {
+
       /**
        * This event fires when the player leaves picture in picture mode
        *
        * @event Player#leavepictureinpicture
-       * @type {EventTarget~Event}
+       * @type {Event}
        */
       return document.exitPictureInPicture();
     }
@@ -3066,7 +3306,7 @@ class Player extends Component {
    * This allows player-wide hotkeys (either as defined below, or optionally
    * by an external function).
    *
-   * @param {EventTarget~Event} event
+   * @param {KeyboardEvent} event
    *        The `keydown` event that caused this function to be called.
    *
    * @listens keydown
@@ -3130,7 +3370,7 @@ class Player extends Component {
    *   m          - toggle mute
    *   k or Space - toggle play/pause
    *
-   * @param {EventTarget~Event} event
+   * @param {Event} event
    *        The `keydown` event that caused this function to be called.
    */
   handleHotkeys(event) {
@@ -3138,9 +3378,9 @@ class Player extends Component {
 
     // set fullscreenKey, muteKey, playPauseKey from `hotkeys`, use defaults if not set
     const {
-      fullscreenKey = keydownEvent => keycode.isEventKey(keydownEvent, 'f'),
-      muteKey = keydownEvent => keycode.isEventKey(keydownEvent, 'm'),
-      playPauseKey = keydownEvent => (keycode.isEventKey(keydownEvent, 'k') || keycode.isEventKey(keydownEvent, 'Space'))
+      fullscreenKey = keydownEvent => (event.key.toLowerCase() === 'f'),
+      muteKey = keydownEvent => (event.key.toLowerCase() === 'm'),
+      playPauseKey = keydownEvent => (event.key.toLowerCase() === 'k' || event.key.toLowerCase() === ' ')
     } = hotkeys;
 
     if (fullscreenKey.call(this, event)) {
@@ -3295,7 +3535,7 @@ class Player extends Component {
    *        algorithms can take the `type` into account.
    *
    *        If not provided, this method acts as a getter.
-   * @param {boolean} isRetry
+   * @param {boolean} [isRetry]
    *        Indicates whether this is being called internally as a result of a retry
    *
    * @return {string|undefined}
@@ -3469,6 +3709,14 @@ class Player extends Component {
    * Begin loading the src data.
    */
   load() {
+    // Workaround to use the load method with the VHS.
+    // Does not cover the case when the load method is called directly from the mediaElement.
+    if (this.tech_ && this.tech_.vhs) {
+      this.src(this.currentSource());
+
+      return;
+    }
+
     this.techCall_('load');
   }
 
@@ -3491,11 +3739,25 @@ class Player extends Component {
     if (this.tech_) {
       this.tech_.clearTracks('text');
     }
+
+    this.removeClass('vjs-playing');
+    this.addClass('vjs-paused');
+
     this.resetCache_();
     this.poster('');
     this.loadTech_(this.options_.techOrder[0], null);
     this.techCall_('reset');
     this.resetControlBarUI_();
+
+    this.error(null);
+
+    if (this.titleBar) {
+      this.titleBar.update({
+        title: undefined,
+        description: undefined
+      });
+    }
+
     if (isEvented(this)) {
       this.trigger('playerreset');
     }
@@ -3517,7 +3779,17 @@ class Player extends Component {
   resetProgressBar_() {
     this.currentTime(0);
 
-    const { durationDisplay, remainingTimeDisplay } = this.controlBar || {};
+    const {
+      currentTimeDisplay,
+      durationDisplay,
+      progressControl,
+      remainingTimeDisplay
+    } = this.controlBar || {};
+    const { seekBar } = progressControl || {};
+
+    if (currentTimeDisplay) {
+      currentTimeDisplay.updateContent();
+    }
 
     if (durationDisplay) {
       durationDisplay.updateContent();
@@ -3525,6 +3797,14 @@ class Player extends Component {
 
     if (remainingTimeDisplay) {
       remainingTimeDisplay.updateContent();
+    }
+
+    if (seekBar) {
+      seekBar.update();
+
+      if (seekBar.loadProgressBar) {
+        seekBar.loadProgressBar.update();
+      }
     }
   }
 
@@ -3598,12 +3878,12 @@ class Player extends Component {
   /**
    * Get or set the preload attribute
    *
-   * @param {boolean} [value]
-   *        - true means that we should preload
-   *        - false means that we should not preload
+   * @param {'none'|'auto'|'metadata'} [value]
+   *        Preload mode to pass to tech
    *
-   * @return {string}
-   *         The preload attribute value when getting
+   * @return {string|undefined}
+   *         - The preload attribute value when getting
+   *         - Nothing when setting
    */
   preload(value) {
     if (value !== undefined) {
@@ -3619,7 +3899,7 @@ class Player extends Component {
    * modify the attribute on the tech. When this is a string the attribute on
    * the tech will be removed and `Player` will handle autoplay on loadstarts.
    *
-   * @param {boolean|string} [value]
+   * @param {boolean|'play'|'muted'|'any'} [value]
    *        - true: autoplay using the browser behavior
    *        - false: do not autoplay
    *        - 'play': call play() on every loadstart
@@ -3627,8 +3907,9 @@ class Player extends Component {
    *        - 'any': call play() on every loadstart. if that fails call muted() then play().
    *        - *: values other than those listed here will be set `autoplay` to true
    *
-   * @return {boolean|string}
-   *         The current value of autoplay when getting
+   * @return {boolean|string|undefined}
+   *         - The current value of autoplay when getting
+   *         - Nothing when setting
    */
   autoplay(value) {
     // getter usage
@@ -3675,9 +3956,9 @@ class Player extends Component {
    *          which in most cases is inline. iOS Safari is a notable exception
    *          and plays fullscreen by default.
    *
-   * @return {string|Player}
+   * @return {string|undefined}
    *         - the current value of playsinline
-   *         - the player when setting
+   *         - Nothing when setting
    *
    * @see [Spec]{@link https://html.spec.whatwg.org/#attr-video-playsinline}
    */
@@ -3685,7 +3966,6 @@ class Player extends Component {
     if (value !== undefined) {
       this.techCall_('setPlaysinline', value);
       this.options_.playsinline = value;
-      return this;
     }
     return this.techGet_('playsinline');
   }
@@ -3697,8 +3977,9 @@ class Player extends Component {
    *        - true means that we should loop the video
    *        - false means that we should not loop the video
    *
-   * @return {boolean}
-   *         The current value of loop when getting
+   * @return {boolean|undefined}
+   *         - The current value of loop when getting
+   *         - Nothing when setting
    */
   loop(value) {
     if (value !== undefined) {
@@ -3717,8 +3998,9 @@ class Player extends Component {
    * @param {string} [src]
    *        Poster image source URL
    *
-   * @return {string}
-   *         The current value of poster when getting
+   * @return {string|undefined}
+   *         - The current value of poster when getting
+   *         - Nothing when setting
    */
   poster(src) {
     if (src === undefined) {
@@ -3748,7 +4030,7 @@ class Player extends Component {
      * This event fires when the poster image is changed on the player.
      *
      * @event Player#posterchange
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('posterchange');
   }
@@ -3788,8 +4070,9 @@ class Player extends Component {
    *        - true to turn controls on
    *        - false to turn controls off
    *
-   * @return {boolean}
-   *         The current value of controls when getting
+   * @return {boolean|undefined}
+   *         - The current value of controls when getting
+   *         - Nothing when setting
    */
   controls(bool) {
     if (bool === undefined) {
@@ -3814,7 +4097,7 @@ class Player extends Component {
       this.addClass('vjs-controls-enabled');
       /**
        * @event Player#controlsenabled
-       * @type {EventTarget~Event}
+       * @type {Event}
        */
       this.trigger('controlsenabled');
       if (!this.usingNativeControls()) {
@@ -3825,7 +4108,7 @@ class Player extends Component {
       this.addClass('vjs-controls-disabled');
       /**
        * @event Player#controlsdisabled
-       * @type {EventTarget~Event}
+       * @type {Event}
        */
       this.trigger('controlsdisabled');
       if (!this.usingNativeControls()) {
@@ -3848,8 +4131,9 @@ class Player extends Component {
    *        - true to turn native controls on
    *        - false to turn native controls off
    *
-   * @return {boolean}
-   *         The current value of native controls when getting
+   * @return {boolean|undefined}
+   *         - The current value of native controls when getting
+   *         - Nothing when setting
    */
   usingNativeControls(bool) {
     if (bool === undefined) {
@@ -3872,7 +4156,7 @@ class Player extends Component {
        * player is using the native device controls
        *
        * @event Player#usingnativecontrols
-       * @type {EventTarget~Event}
+       * @type {Event}
        */
       this.trigger('usingnativecontrols');
     } else {
@@ -3882,7 +4166,7 @@ class Player extends Component {
        * player is using the custom HTML controls
        *
        * @event Player#usingcustomcontrols
-       * @type {EventTarget~Event}
+       * @type {Event}
        */
       this.trigger('usingcustomcontrols');
     }
@@ -3897,8 +4181,9 @@ class Player extends Component {
    *         A MediaError or a string/number to be turned
    *         into a MediaError
    *
-   * @return {MediaError|null}
-   *         The current MediaError when getting (or null)
+   * @return {MediaError|null|undefined}
+   *         - The current MediaError when getting (or null)
+   *         - Nothing when setting
    */
   error(err) {
     if (err === undefined) {
@@ -3941,7 +4226,7 @@ class Player extends Component {
 
     // restoring to default
     if (err === null) {
-      this.error_ = err;
+      this.error_ = null;
       this.removeClass('vjs-error');
       if (this.errorDisplay) {
         this.errorDisplay.close();
@@ -3960,7 +4245,7 @@ class Player extends Component {
 
     /**
      * @event Player#error
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('error');
 
@@ -3990,8 +4275,9 @@ class Player extends Component {
    *        - true if the user is active
    *        - false if the user is inactive
    *
-   * @return {boolean}
-   *         The current value of userActive when getting
+   * @return {boolean|undefined}
+   *         - The current value of userActive when getting
+   *         - Nothing when setting
    */
   userActive(bool) {
     if (bool === undefined) {
@@ -4012,7 +4298,7 @@ class Player extends Component {
       this.addClass('vjs-user-active');
       /**
        * @event Player#useractive
-       * @type {EventTarget~Event}
+       * @type {Event}
        */
       this.trigger('useractive');
       return;
@@ -4038,7 +4324,7 @@ class Player extends Component {
     this.addClass('vjs-user-inactive');
     /**
      * @event Player#userinactive
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.trigger('userinactive');
   }
@@ -4119,7 +4405,8 @@ class Player extends Component {
     // http://ejohn.org/blog/learning-from-twitter/
     let inactivityTimeout;
 
-    this.setInterval(function() {
+    /** @this Player */
+    const activityCheck = function() {
       // Check to see if mouse/touch activity has happened
       if (!this.userActivity_) {
         return;
@@ -4151,7 +4438,9 @@ class Player extends Component {
         }
       }, timeout);
 
-    }, 250);
+    };
+
+    this.setInterval(activityCheck, 250);
   }
 
   /**
@@ -4164,8 +4453,9 @@ class Player extends Component {
    * @param {number} [rate]
    *       New playback rate to set.
    *
-   * @return {number}
-   *         The current playback rate when getting or 1.0
+   * @return {number|undefined}
+   *         - The current playback rate when getting or 1.0
+   *         - Nothing when setting
    */
   playbackRate(rate) {
     if (rate !== undefined) {
@@ -4192,9 +4482,9 @@ class Player extends Component {
    * @param {number} [rate]
    *       New default playback rate to set.
    *
-   * @return {number|Player}
+   * @return {number|undefined}
    *         - The default playback rate when getting or 1.0
-   *         - the player when setting
+   *         - Nothing when setting
    */
   defaultPlaybackRate(rate) {
     if (rate !== undefined) {
@@ -4210,12 +4500,13 @@ class Player extends Component {
   /**
    * Gets or sets the audio flag
    *
-   * @param {boolean} bool
+   * @param {boolean} [bool]
    *        - true signals that this is an audio player
    *        - false signals that this is not an audio player
    *
-   * @return {boolean}
-   *         The current value of isAudio when getting
+   * @return {boolean|undefined}
+   *         - The current value of isAudio when getting
+   *         - Nothing when setting
    */
   isAudio(bool) {
     if (bool !== undefined) {
@@ -4224,6 +4515,17 @@ class Player extends Component {
     }
 
     return !!this.isAudio_;
+  }
+
+  updatePlayerHeightOnAudioOnlyMode_() {
+    const controlBar = this.getChild('ControlBar');
+
+    if (!controlBar || this.audioOnlyCache_.controlBarHeight === controlBar.currentHeight()) {
+      return;
+    }
+
+    this.audioOnlyCache_.controlBarHeight = controlBar.currentHeight();
+    this.height(this.audioOnlyCache_.controlBarHeight);
   }
 
   enableAudioOnlyUI_() {
@@ -4249,6 +4551,9 @@ class Player extends Component {
     });
 
     this.audioOnlyCache_.playerHeight = this.currentHeight();
+    this.audioOnlyCache_.controlBarHeight = controlBarHeight;
+
+    this.on('playerresize', this.boundUpdatePlayerHeightOnAudioOnlyMode_);
 
     // Set the player height the same as the control bar
     this.height(controlBarHeight);
@@ -4257,6 +4562,7 @@ class Player extends Component {
 
   disableAudioOnlyUI_() {
     this.removeClass('vjs-audio-only-mode');
+    this.off('playerresize', this.boundUpdatePlayerHeightOnAudioOnlyMode_);
 
     // Show player components that were previously hidden
     this.audioOnlyCache_.hiddenChildren.forEach(child => child.show());
@@ -4479,7 +4785,7 @@ class Player extends Component {
   }
 
   /**
-   * The player's language code.
+   * Set or get the player's language code.
    *
    * Changing the language will trigger
    * [languagechange]{@link Player#event:languagechange}
@@ -4492,8 +4798,9 @@ class Player extends Component {
    * @param {string} [code]
    *        the language code to set the player to
    *
-   * @return {string}
-   *         The current language code when getting
+   * @return {string|undefined}
+   *         - The current language code when getting
+   *         - Nothing when setting
    */
   language(code) {
     if (code === undefined) {
@@ -4509,7 +4816,7 @@ class Player extends Component {
         * fires when the player language change
         *
         * @event Player#languagechange
-        * @type {EventTarget~Event}
+        * @type {Event}
         */
         this.trigger('languagechange');
       }
@@ -4529,7 +4836,7 @@ class Player extends Component {
   }
 
   /**
-   * returns a JavaScript object reperesenting the current track
+   * returns a JavaScript object representing the current track
    * information. **DOES not return it as JSON**
    *
    * @return {Object}
@@ -4693,13 +5000,14 @@ class Player extends Component {
    * Get or set a flag indicating whether or not this player should adjust
    * its UI based on its dimensions.
    *
-   * @param  {boolean} value
+   * @param  {boolean} [value]
    *         Should be `true` if the player should adjust its UI based on its
    *         dimensions; otherwise, should be `false`.
    *
-   * @return {boolean}
+   * @return {boolean|undefined}
    *         Will be `true` if this player should adjust its UI based on its
    *         dimensions; otherwise, will be `false`.
+   *         Nothing if setting
    */
   responsive(value) {
 
@@ -4816,6 +5124,8 @@ class Player extends Component {
       return;
     }
 
+    const crossOrigin = this.crossOrigin();
+
     this.reset();
 
     // Clone the media object so it cannot be mutated from outside.
@@ -4829,6 +5139,10 @@ class Player extends Component {
         src: poster,
         type: getMimetype(poster)
       }];
+    }
+
+    if (crossOrigin) {
+      this.crossOrigin(crossOrigin);
     }
 
     if (src) {
@@ -4954,6 +5268,7 @@ class Player extends Component {
    * @param {boolean} enabled
    * @fires Player#debugon
    * @fires Player#debugoff
+   * @return {boolean|undefined}
    */
   debug(enabled) {
     if (enabled === undefined) {
@@ -4980,7 +5295,7 @@ class Player extends Component {
    * Values other than arrays are ignored.
    *
    * @fires Player#playbackrateschange
-   * @param {number[]} newRates
+   * @param {number[]} [newRates]
    *                   The new rates that the playback rates menu should update to.
    *                   An empty array will hide the menu
    * @return {number[]} When used as a getter will return the current playback rates
@@ -5006,7 +5321,7 @@ class Player extends Component {
     * fires when the playback rates in a player are changed
     *
     * @event Player#playbackrateschange
-    * @type {EventTarget~Event}
+    * @type {Event}
     */
     this.trigger('playbackrateschange');
   }
@@ -5167,82 +5482,14 @@ Player.prototype.options_ = {
   breakpoints: {},
   responsive: false,
   audioOnlyMode: false,
-  audioPosterMode: false
+  audioPosterMode: false,
+  spatialNavigation: {
+    enabled: false,
+    horizontalSeek: false
+  },
+  // Default smooth seeking to false
+  enableSmoothSeeking: false
 };
-
-[
-  /**
-   * Returns whether or not the player is in the "ended" state.
-   *
-   * @return {Boolean} True if the player is in the ended state, false if not.
-   * @method Player#ended
-   */
-  'ended',
-  /**
-   * Returns whether or not the player is in the "seeking" state.
-   *
-   * @return {Boolean} True if the player is in the seeking state, false if not.
-   * @method Player#seeking
-   */
-  'seeking',
-  /**
-   * Returns the TimeRanges of the media that are currently available
-   * for seeking to.
-   *
-   * @return {TimeRanges} the seekable intervals of the media timeline
-   * @method Player#seekable
-   */
-  'seekable',
-  /**
-   * Returns the current state of network activity for the element, from
-   * the codes in the list below.
-   * - NETWORK_EMPTY (numeric value 0)
-   *   The element has not yet been initialised. All attributes are in
-   *   their initial states.
-   * - NETWORK_IDLE (numeric value 1)
-   *   The element's resource selection algorithm is active and has
-   *   selected a resource, but it is not actually using the network at
-   *   this time.
-   * - NETWORK_LOADING (numeric value 2)
-   *   The user agent is actively trying to download data.
-   * - NETWORK_NO_SOURCE (numeric value 3)
-   *   The element's resource selection algorithm is active, but it has
-   *   not yet found a resource to use.
-   *
-   * @see https://html.spec.whatwg.org/multipage/embedded-content.html#network-states
-   * @return {number} the current network activity state
-   * @method Player#networkState
-   */
-  'networkState',
-  /**
-   * Returns a value that expresses the current state of the element
-   * with respect to rendering the current playback position, from the
-   * codes in the list below.
-   * - HAVE_NOTHING (numeric value 0)
-   *   No information regarding the media resource is available.
-   * - HAVE_METADATA (numeric value 1)
-   *   Enough of the resource has been obtained that the duration of the
-   *   resource is available.
-   * - HAVE_CURRENT_DATA (numeric value 2)
-   *   Data for the immediate current playback position is available.
-   * - HAVE_FUTURE_DATA (numeric value 3)
-   *   Data for the immediate current playback position is available, as
-   *   well as enough data for the user agent to advance the current
-   *   playback position in the direction of playback.
-   * - HAVE_ENOUGH_DATA (numeric value 4)
-   *   The user agent estimates that enough data is available for
-   *   playback to proceed uninterrupted.
-   *
-   * @see https://html.spec.whatwg.org/multipage/embedded-content.html#dom-media-readystate
-   * @return {number} the current playback rendering state
-   * @method Player#readyState
-   */
-  'readyState'
-].forEach(function(fn) {
-  Player.prototype[fn] = function() {
-    return this.techGet_(fn);
-  };
-});
 
 TECH_EVENTS_RETRIGGER.forEach(function(event) {
   Player.prototype[`handleTech${toTitleCase(event)}_`] = function() {
@@ -5254,14 +5501,14 @@ TECH_EVENTS_RETRIGGER.forEach(function(event) {
  * Fired when the player has initial duration and dimension information
  *
  * @event Player#loadedmetadata
- * @type {EventTarget~Event}
+ * @type {Event}
  */
 
 /**
  * Fired when the player has downloaded data at the current playback position
  *
  * @event Player#loadeddata
- * @type {EventTarget~Event}
+ * @type {Event}
  */
 
 /**
@@ -5270,14 +5517,14 @@ TECH_EVENTS_RETRIGGER.forEach(function(event) {
  * playback technology in use.
  *
  * @event Player#timeupdate
- * @type {EventTarget~Event}
+ * @type {Event}
  */
 
 /**
  * Fired when the volume changes
  *
  * @event Player#volumechange
- * @type {EventTarget~Event}
+ * @type {Event}
  */
 
 /**

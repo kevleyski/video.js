@@ -4,6 +4,8 @@
 import Component from '../../component.js';
 import * as Fn from '../../utils/fn.js';
 
+/** @import Player from '../../player' */
+
 import './volume-level-tooltip';
 
 /**

@@ -146,7 +146,7 @@ QUnit.test('test defaultPlaybackRate', function(assert) {
   assert.strictEqual(tech.defaultPlaybackRate(), 0.75, 'can be changed from the API');
 });
 
-QUnit.test('blacklist playbackRate support on older verisons of Chrome on Android', function(assert) {
+QUnit.test('blacklist playbackRate support on older versions of Chrome on Android', function(assert) {
   if (!Html5.canControlPlaybackRate()) {
     assert.ok(true, 'playbackRate is not supported');
     return;
@@ -892,4 +892,16 @@ QUnit.test('featuresVideoFrameCallback is false for Safari DRM', function(assert
     // video.webkitKeys isn't writable on Safari, so relying on the mocked property on other browsers
     assert.ok(true, 'skipped because webkitKeys not writable');
   }
+});
+
+QUnit.test('supportsFullScreen is always with `webkitEnterFullScreen`', function(assert) {
+  const oldEl = tech.el_;
+
+  tech.el_ = {
+    webkitEnterFullScreen: () => {}
+  };
+
+  assert.ok(tech.supportsFullScreen(), 'supportsFullScreen() true with webkitEnterFullScreen');
+
+  tech.el_ = oldEl;
 });

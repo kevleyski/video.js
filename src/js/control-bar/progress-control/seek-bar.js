@@ -8,8 +8,9 @@ import * as Dom from '../../utils/dom.js';
 import * as Fn from '../../utils/fn.js';
 import {formatTime} from '../../utils/time.js';
 import {silencePromise} from '../../utils/promise';
-import keycode from 'keycode';
 import document from 'global/document';
+
+/** @import Player from '../../player' */
 
 import './load-progress-bar.js';
 import './play-progress-bar.js';
@@ -52,7 +53,8 @@ class SeekBar extends Slider {
     this.update_ = Fn.bind_(this, this.update);
     this.update = Fn.throttle(this.update_, Fn.UPDATE_REFRESH_INTERVAL);
 
-    this.on(this.player_, ['ended', 'durationchange', 'timeupdate'], this.update);
+    this.on(this.player_, ['durationchange', 'timeupdate'], this.update);
+    this.on(this.player_, ['ended'], this.update_);
     if (this.player_.liveTracker) {
       this.on(this.player_.liveTracker, 'liveedgechange', this.update);
     }
@@ -129,7 +131,7 @@ class SeekBar extends Slider {
    * This function updates the play progress bar and accessibility
    * attributes to whatever is passed in.
    *
-   * @param {EventTarget~Event} [event]
+   * @param {Event} [event]
    *        The `timeupdate` or `ended` event that caused this to run.
    *
    * @listens Player#timeupdate
@@ -244,7 +246,7 @@ class SeekBar extends Slider {
   /**
    * Handle mouse down on seek bar
    *
-   * @param {EventTarget~Event} event
+   * @param {MouseEvent} event
    *        The `mousedown` event that caused this to run.
    *
    * @listens mousedown
@@ -266,14 +268,14 @@ class SeekBar extends Slider {
   /**
    * Handle mouse move on seek bar
    *
-   * @param {EventTarget~Event} event
+   * @param {MouseEvent} event
    *        The `mousemove` event that caused this to run.
    * @param {boolean} mouseDown this is a flag that should be set to true if `handleMouseMove` is called directly. It allows us to skip things that should not happen if coming from mouse down but should happen on regular mouse move handler. Defaults to false
    *
    * @listens mousemove
    */
   handleMouseMove(event, mouseDown = false) {
-    if (!Dom.isSingleLeftClick(event)) {
+    if (!Dom.isSingleLeftClick(event) || isNaN(this.player_.duration())) {
       return;
     }
 
@@ -324,6 +326,10 @@ class SeekBar extends Slider {
 
     // Set new time (tell player to seek to new time)
     this.userSeek_(newTime);
+
+    if (this.player_.options_.enableSmoothSeeking) {
+      this.update();
+    }
   }
 
   enable() {
@@ -351,7 +357,7 @@ class SeekBar extends Slider {
   /**
    * Handle mouse up on seek bar
    *
-   * @param {EventTarget~Event} event
+   * @param {MouseEvent} event
    *        The `mouseup` event that caused this to run.
    *
    * @listens mouseup
@@ -370,7 +376,7 @@ class SeekBar extends Slider {
      * This is particularly useful for if the player is paused to time the time displays.
      *
      * @event Tech#timeupdate
-     * @type {EventTarget~Event}
+     * @type {Event}
      */
     this.player_.trigger({ type: 'timeupdate', target: this, manuallyTriggered: true });
     if (this.videoWasPlaying) {
@@ -400,7 +406,7 @@ class SeekBar extends Slider {
    * Toggles the playback state of the player
    * This gets called when enter or space is used on the seekbar
    *
-   * @param {EventTarget~Event} event
+   * @param {KeyboardEvent} event
    *        The `keydown` event that caused this function to be called
    *
    */
@@ -423,7 +429,7 @@ class SeekBar extends Slider {
    *   PageDown key moves back a larger step than ArrowDown
    *   PageUp key moves forward a large step
    *
-   * @param {EventTarget~Event} event
+   * @param {KeyboardEvent} event
    *        The `keydown` event that caused this function to be called.
    *
    * @listens keydown
@@ -431,15 +437,15 @@ class SeekBar extends Slider {
   handleKeyDown(event) {
     const liveTracker = this.player_.liveTracker;
 
-    if (keycode.isEventKey(event, 'Space') || keycode.isEventKey(event, 'Enter')) {
+    if (event.key === ' ' || event.key === 'Enter') {
       event.preventDefault();
       event.stopPropagation();
       this.handleAction(event);
-    } else if (keycode.isEventKey(event, 'Home')) {
+    } else if (event.key === 'Home') {
       event.preventDefault();
       event.stopPropagation();
       this.userSeek_(0);
-    } else if (keycode.isEventKey(event, 'End')) {
+    } else if (event.key === 'End') {
       event.preventDefault();
       event.stopPropagation();
       if (liveTracker && liveTracker.isLive()) {
@@ -447,21 +453,21 @@ class SeekBar extends Slider {
       } else {
         this.userSeek_(this.player_.duration());
       }
-    } else if (/^[0-9]$/.test(keycode(event))) {
+    } else if (/^[0-9]$/.test(event.key)) {
       event.preventDefault();
       event.stopPropagation();
-      const gotoFraction = (keycode.codes[keycode(event)] - keycode.codes['0']) * 10.0 / 100.0;
+      const gotoFraction = parseInt(event.key, 10) * 0.1;
 
       if (liveTracker && liveTracker.isLive()) {
         this.userSeek_(liveTracker.seekableStart() + (liveTracker.liveWindow() * gotoFraction));
       } else {
         this.userSeek_(this.player_.duration() * gotoFraction);
       }
-    } else if (keycode.isEventKey(event, 'PgDn')) {
+    } else if (event.key === 'PageDown') {
       event.preventDefault();
       event.stopPropagation();
       this.userSeek_(this.player_.currentTime() - (STEP_SECONDS * PAGE_KEY_MULTIPLIER));
-    } else if (keycode.isEventKey(event, 'PgUp')) {
+    } else if (event.key === 'PageUp') {
       event.preventDefault();
       event.stopPropagation();
       this.userSeek_(this.player_.currentTime() + (STEP_SECONDS * PAGE_KEY_MULTIPLIER));
@@ -474,7 +480,8 @@ class SeekBar extends Slider {
   dispose() {
     this.disableInterval_();
 
-    this.off(this.player_, ['ended', 'durationchange', 'timeupdate'], this.update);
+    this.off(this.player_, ['durationchange', 'timeupdate'], this.update);
+    this.off(this.player_, ['ended'], this.update_);
     if (this.player_.liveTracker) {
       this.off(this.player_.liveTracker, 'liveedgechange', this.update);
     }

@@ -6,6 +6,8 @@ import PlaybackRateMenuItem from './playback-rate-menu-item.js';
 import Component from '../../component.js';
 import * as Dom from '../../utils/dom.js';
 
+/** @import Player from '../../player' */
+
 /**
  * The component for controlling the playback rate.
  *
@@ -131,7 +133,7 @@ class PlaybackRateMenuButton extends MenuButton {
   /**
    * Hide playback rate controls when they're no playback rate options to select
    *
-   * @param {EventTarget~Event} [event]
+   * @param {Event} [event]
    *        The event that caused this function to run.
    *
    * @listens Player#loadstart
@@ -147,7 +149,7 @@ class PlaybackRateMenuButton extends MenuButton {
   /**
    * Update button label when rate changed
    *
-   * @param {EventTarget~Event} [event]
+   * @param {Event} [event]
    *        The event that caused this function to run.
    *
    * @listens Player#ratechange

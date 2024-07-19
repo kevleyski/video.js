@@ -67,7 +67,7 @@ export let IS_CHROMIUM = false;
  * This will also be `true` for Chrome on iOS, which will have different support
  * as it is actually Safari under the hood.
  *
- * Depreacted, as the behaviour to not match Edge was to prevent Legacy Edge's UA matching.
+ * Deprecated, as the behaviour to not match Edge was to prevent Legacy Edge's UA matching.
  * IS_CHROMIUM should be used instead.
  * "Chromium but not Edge" could be explicitly tested with IS_CHROMIUM && !IS_EDGE
  *
@@ -88,13 +88,21 @@ export let CHROMIUM_VERSION = null;
 /**
  * The detected Google Chrome version - or `null`.
  * This has always been the _Chromium_ version, i.e. would return on Chromium Edge.
- * Depreacted, use CHROMIUM_VERSION instead.
+ * Deprecated, use CHROMIUM_VERSION instead.
  *
  * @static
  * @deprecated
  * @type {number|null}
  */
 export let CHROME_VERSION = null;
+
+/**
+ * Whether or not this is a Chromecast receiver application.
+ *
+ * @static
+ * @type {Boolean}
+ */
+export const IS_CHROMECAST_RECEIVER = Boolean(window.cast && window.cast.framework && window.cast.framework.CastReceiverContext);
 
 /**
  * The detected Internet Explorer version - or `null`.
@@ -141,6 +149,30 @@ export let IS_IPAD = false;
 export let IS_IPHONE = false;
 
 /**
+ * Whether or not this is a Tizen device.
+ *
+ * @static
+ * @type {Boolean}
+ */
+export let IS_TIZEN = false;
+
+/**
+ * Whether or not this is a WebOS device.
+ *
+ * @static
+ * @type {Boolean}
+ */
+export let IS_WEBOS = false;
+
+/**
+ * Whether or not this is a Smart TV (Tizen or WebOS) device.
+ *
+ * @static
+ * @type {Boolean}
+ */
+export let IS_SMART_TV = false;
+
+/**
  * Whether or not this device is touch-enabled.
  *
  * @static
@@ -154,7 +186,7 @@ export const TOUCH_ENABLED = Boolean(Dom.isReal() && (
 
 const UAD = window.navigator && window.navigator.userAgentData;
 
-if (UAD) {
+if (UAD && UAD.platform && UAD.brands) {
   // If userAgentData is present, use it instead of userAgent to avoid warnings
   // Currently only implemented on Chromium
   // userAgentData does not expose Android version, so ANDROID_VERSION remains `null`
@@ -167,7 +199,7 @@ if (UAD) {
   IS_WINDOWS = UAD.platform === 'Windows';
 }
 
-// If the broser is not Chromium, either userAgentData is not present which could be an old Chromium browser,
+// If the browser is not Chromium, either userAgentData is not present which could be an old Chromium browser,
 //  or it's a browser that has added userAgentData since that we don't have tests for yet. In either case,
 // the checks need to be made agiainst the regular userAgent string.
 if (!IS_CHROMIUM) {
@@ -235,7 +267,13 @@ if (!IS_CHROMIUM) {
     return version;
   }());
 
-  IS_SAFARI = (/Safari/i).test(USER_AGENT) && !IS_CHROME && !IS_ANDROID && !IS_EDGE;
+  IS_TIZEN = (/Tizen/i).test(USER_AGENT);
+
+  IS_WEBOS = (/Web0S/i).test(USER_AGENT);
+
+  IS_SMART_TV = IS_TIZEN || IS_WEBOS;
+
+  IS_SAFARI = (/Safari/i).test(USER_AGENT) && !IS_CHROME && !IS_ANDROID && !IS_EDGE && !IS_SMART_TV;
 
   IS_WINDOWS = (/Windows/i).test(USER_AGENT);
 

@@ -4,6 +4,8 @@
 import MenuItem from '../../menu/menu-item.js';
 import Component from '../../component.js';
 
+/** @import Player from '../../player' */
+
 /**
  * The chapter track menu item
  *
@@ -40,7 +42,7 @@ class ChaptersTrackMenuItem extends MenuItem {
    * This gets called when an `ChaptersTrackMenuItem` is "clicked". See
    * {@link ClickableComponent} for more detailed information on what a click can be.
    *
-   * @param {EventTarget~Event} [event]
+   * @param {Event} [event]
    *        The `keydown`, `tap`, or `click` event that caused this function to be
    *        called.
    *

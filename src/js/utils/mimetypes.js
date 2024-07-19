@@ -1,5 +1,7 @@
 import * as Url from '../utils/url.js';
 
+/** @import Player from '../player' */
+
 /**
  * Mimetypes
  *

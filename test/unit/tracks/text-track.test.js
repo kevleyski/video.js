@@ -231,6 +231,21 @@ QUnit.test('original cue can be used to remove cue from cues list', function(ass
   assert.equal(tt.cues.length, 0, 'we have removed cue1');
 });
 
+QUnit.test('non-VTTCue can be used to remove cue from cues list', function(assert) {
+  const tt = new TextTrack({
+    tech: this.tech
+  });
+
+  const cue1 = { id: 1, text: 'test' };
+
+  assert.equal(tt.cues.length, 0, 'start with zero cues');
+  tt.addCue(cue1);
+  assert.equal(tt.cues.length, 1, 'we have one cue');
+
+  tt.removeCue(cue1);
+  assert.equal(tt.cues.length, 0, 'we have removed cue1');
+});
+
 QUnit.test('can only remove one cue at a time', function(assert) {
   const tt = new TextTrack({
     tech: this.tech
@@ -251,6 +266,43 @@ QUnit.test('can only remove one cue at a time', function(assert) {
 
   tt.removeCue(cue1);
   assert.equal(tt.cues.length, 0, 'we have removed the other instance of cue1');
+});
+
+QUnit.test('does not include past cues in activeCues', function(assert) {
+  // Testing for the absence of a previous behaviour, which considered cues with equal
+  // start and end times as active 0.5s after ending
+  const player = TestHelpers.makePlayer();
+  const tt = new TextTrack({
+    tech: player.tech_,
+    mode: 'showing'
+  });
+  const expectedCue = {
+    id: '2',
+    startTime: 2.555,
+    endTime: 3
+  };
+
+  player.tech_.currentTime = function() {
+    return 2.556;
+  };
+
+  tt.addCue({
+    id: '1',
+    startTime: 1,
+    endTime: 2.555
+  });
+  tt.addCue({
+    id: '2',
+    startTime: 2.555,
+    endTime: 2.555
+  });
+  // start 2.55
+  tt.addCue(expectedCue);
+
+  player.tech_.trigger('playing');
+
+  assert.equal(tt.activeCues_.length, 1, 'only one cue is present');
+  assert.equal(tt.activeCues_[0].originalCue_, expectedCue, 'correct active cue is present');
 });
 
 QUnit.test('does not fire cuechange before Tech is ready', function(assert) {

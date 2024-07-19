@@ -5,6 +5,8 @@
 import EventTarget from '../event-target';
 import TextTrack from '../tracks/text-track';
 
+/** @import Tech from '../tech/tech' */
+
 /**
  * A single track represented in the DOM.
  *
@@ -105,6 +107,9 @@ class HTMLTrackElement extends EventTarget {
   }
 }
 
+/**
+ * @protected
+ */
 HTMLTrackElement.prototype.allowedEvents_ = {
   load: 'load'
 };
